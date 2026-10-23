@@ -613,38 +613,36 @@ public class MainActivity extends Activity {
             notifyUser(tr("Registrazione non riuscita.","Recording failed.","Falló la grabación."));
             return;
         }
-        if(getSharedPreferences("options",0).getBoolean("online_stt_consent",false))
-            autoTranscribe(endedKey);
-        else notifyUser(tr("Audio salvato (trascrizione online disattivata).",
-            "Audio saved (online transcription disabled).",
-            "Audio guardado (transcripción en línea desactivada)."));
+        if(cloudSttReady())autoTranscribe(endedKey);
+        else notifyUser(tr("Audio salvato. Configura l'API nelle impostazioni per trascriverlo.",
+            "Audio saved. Configure the API in Settings to transcribe it.",
+            "Audio guardado. Configura la API en Ajustes para transcribirlo."));
+    }
+    private boolean cloudSttReady(){
+        return getSharedPreferences("options",0).getBoolean("cloud_stt_consent",false)
+           && !document.optString("cloudSttApiKey","").isEmpty();
     }
     private void toggleRecord(String key,Button btn){
         if(recorder!=null){stopRecording();return;}
         if(transcriptRunning){
-            notifyUser(tr("La registrazione precedente è ancora in trascrizione.",
-                "The previous recording is still being transcribed.",
-                "La grabación anterior sigue transcribiéndose."));return;
+            notifyUser(tr("Trascrizione precedente in corso. Aspetta la fine.",
+                "Previous transcription is still running.",
+                "La transcripción anterior está en curso."));return;
         }
         if(!micPermission())return;
-        android.content.SharedPreferences p=getSharedPreferences("options",0);
-        if(!p.getBoolean("stt_choice_made",false)){
+        if(!cloudSttReady()){
             new AlertDialog.Builder(this)
-              .setTitle(tr("Registrazione e trascrizione","Recording and transcription","Grabación y transcripción"))
-              .setMessage(tr(
-                 "Il pulsante REC salva una copia della registrazione sul telefono. Per ottenere automaticamente il testo, il servizio vocale di Android può inviare l'audio a un fornitore esterno tramite Internet. I dati del diario non vengono inviati dall'IA locale. Vuoi consentire la trascrizione online?",
-                 "REC saves an audio copy on your phone. For automatic transcription, Android's speech service may send recorded audio to an external provider over the Internet. The local AI does not upload your journal. Allow online transcription?",
-                 "REC guarda una copia del audio en el teléfono. Para transcribir automáticamente, el servicio de voz de Android puede enviar el audio a un proveedor externo por Internet. La IA local no envía tu diario. ¿Permitir transcripción en línea?"))
-              .setPositiveButton(tr("Consenti e registra","Allow and record","Permitir y grabar"),(dialog,which)->{
-                  p.edit().putBoolean("online_stt_consent",true).putBoolean("stt_choice_made",true).apply();
-                  beginAudioRecording(key,btn);
-              })
-              .setNeutralButton(tr("Solo registra","Record only","Solo grabar"),(dialog,which)->{
-                  p.edit().putBoolean("online_stt_consent",false).putBoolean("stt_choice_made",true).apply();
-                  beginAudioRecording(key,btn);
-              })
-              .setNegativeButton(tr("Annulla","Cancel","Cancelar"),null)
-              .show();
+             .setTitle(tr("Trascrizione automatica online","Automatic online transcription",
+               "Transcripción automática en línea"))
+             .setMessage(tr(
+               "Il servizio vocale Android non accetta la registrazione (errore 5). Per trascrivere davvero i file M4A serve un servizio esterno. L'app può usare OpenAI Speech-to-Text, configurando una tua chiave API e il consenso all'invio dell'audio. L'uso API può avere un costo; non è incluso nell'abbonamento ChatGPT. Puoi comunque registrare solo l'audio.",
+               "The Android speech service rejected recorded audio (error 5). To transcribe saved M4A files, configure your own OpenAI Speech-to-Text API credential and consent to sending audio. API usage may cost money and is separate from ChatGPT subscriptions. You can still record audio only.",
+               "El servicio de voz Android rechazó el audio grabado (error 5). Para transcribir archivos M4A configura una clave personal de OpenAI Speech-to-Text y autoriza el envío de audio. Puede tener coste adicional y no está incluido en ChatGPT. También puedes grabar solo audio."))
+             .setPositiveButton(tr("Configura","Configure","Configurar"),(dialog,which)->showSettings())
+             .setNeutralButton(tr("Solo registra","Record audio only","Solo grabar"),
+                (dialog,which)->beginAudioRecording(key,btn))
+             .setNegativeButton(tr("Annulla","Cancel","Cancelar"),null)
+             .show();
             return;
         }
         beginAudioRecording(key,btn);
@@ -673,42 +671,112 @@ public class MainActivity extends Activity {
         }
     }
     private void autoTranscribe(String key){
-        File recording=audioFile(key);
-        if(!recording.isFile())return;
-        if(!RecordingTranscriber.supported(this)){
-            set(session(),"speechError_"+key,"NO_RECOGNITION_SERVICE");persist();
-            notifyUser(tr("Servizio vocale Android non disponibile. Audio salvato.",
-                "Android speech service is unavailable. Audio saved.",
-                "Servicio de voz de Android no disponible. Audio guardado."));
+        File recorded=audioFile(key);
+        if(!recorded.isFile())return;
+        if(!cloudSttReady()){
+            set(session(),"speechError_"+key,"API_NOT_CONFIGURED");persist();
+            notifyUser(tr("Audio salvato. Serve una chiave API personale per la trascrizione.",
+                "Audio saved. Configure your personal API credential.",
+                "Audio guardado. Configura tu clave API personal."));
             return;
         }
         transcriptRunning=true;
-        notifyUser(tr("Audio salvato. Trascrizione automatica in corso…",
-            "Audio saved. Transcribing automatically…",
-            "Audio guardado. Transcripción automática en curso…"));
-        RecordingTranscriber.start(this,recording,I18n.locale(lang),(transcript,error)->{
+        final String recordedDate=date;
+        final String apiKey=document.optString("cloudSttApiKey","");
+        final String selectedLang=lang;
+        notifyUser(tr("Audio salvato. Trascrizione online in corso…",
+            "Audio saved. Online transcription in progress…",
+            "Audio guardado. Transcripción online en curso…"));
+        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,(transcript,error)->{
             transcriptRunning=false;
             if(isFinishing())return;
+            JSONObject sessions=document.optJSONObject("sessions");
+            JSONObject values=sessions==null?null:sessions.optJSONObject(recordedDate);
+            if(values==null)return;
             if(error!=null||transcript==null||transcript.trim().isEmpty()){
                 String detail=error==null?"No speech recognized":error.getMessage();
-                set(session(),"speechError_"+key,detail==null?"Unknown":detail.substring(0,Math.min(detail.length(),120)));
+                if(detail==null)detail="Unknown transcription error";
+                set(values,"speechError_"+key,detail.substring(0,Math.min(detail.length(),180)));
                 persist();
-                notifyUser(tr("Audio conservato. Trascrizione non riuscita: ",
-                    "Audio preserved. Transcription failed: ",
-                    "Audio conservado. Falló la transcripción: ")+detail);
+                notifyUser(tr("Audio conservato. Problema con la trascrizione: ",
+                    "Audio preserved. Transcription issue: ",
+                    "Audio conservado. Problema con la transcripción: ")+detail);
             }else{
-                EditText visibleField=null;
-                for(int i=0;i<currentKeys.size();i++)
-                    if(currentKeys.get(i).equals(key)){visibleField=currentFields.get(i);break;}
-                appendTranscript(key,transcript,visibleField);
-                notifyUser(tr("Testo trascritto e salvato nel diario.",
-                    "Transcribed text saved to your journal.",
-                    "Texto transcrito y guardado en el diario."));
+                String old=values.optString(key,"").trim();
+                String updated=old.isEmpty()?transcript.trim():old+"\n"+transcript.trim();
+                set(values,key,updated);
+                set(values,"transcribed_"+key,true);
+                set(values,"speechError_"+key,"");
+                persist();
+                if(date.equals(recordedDate)){
+                    for(int i=0;i<currentKeys.size();i++){
+                        if(currentKeys.get(i).equals(key)){
+                            EditText answer=currentFields.get(i);
+                            if(answer!=null&&answer.isAttachedToWindow()){
+                                answer.setText(updated);
+                                answer.setSelection(answer.length());
+                                scrollFieldIntoView(answer);
+                            }
+                            break;
+                        }
+                    }
+                }
+                notifyUser(tr("Trascrizione completata e salvata nel diario.",
+                    "Transcription complete and saved.",
+                    "Transcripción completada y guardada."));
             }
             if(finishAfterTranscript){
                 finishAfterTranscript=false;
                 completeAndAnalyze();
             }
+        });
+    }
+    private void retryUntranscribedToday(){
+        if(!cloudSttReady()){
+            notifyUser(tr("Configura prima la chiave API e attiva il consenso.",
+                "Configure the API key and consent first.",
+                "Configura primero la clave API y el consentimiento."));
+            return;
+        }
+        if(recorder!=null||transcriptRunning)return;
+        java.util.ArrayList<String> pending=new java.util.ArrayList<>();
+        for(int page=0;page<6;page++)for(int i=0;i<3;i++){
+            if(page==1||(page==4&&i==2))continue;
+            String k="p"+page+"_"+i;
+            if(audioFile(k).isFile()&&!session().optBoolean("transcribed_"+k,false))
+                pending.add(k);
+        }
+        if(pending.isEmpty()){
+            notifyUser(tr("Non ci sono registrazioni in sospeso per oggi.",
+                "No pending recordings for today.",
+                "No hay grabaciones pendientes de hoy."));
+            return;
+        }
+        retryPendingSequentially(pending,0);
+    }
+    private void retryPendingSequentially(java.util.ArrayList<String> pending,int index){
+        if(index>=pending.size()||isFinishing())return;
+        String key=pending.get(index);
+        File recorded=audioFile(key);
+        String apiKey=document.optString("cloudSttApiKey","");
+        String selectedLang=lang;
+        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,(text,error)->{
+            if(isFinishing())return;
+            if(error==null&&text!=null&&!text.trim().isEmpty()){
+                appendTranscript(key,text,null);
+                set(session(),"speechError_"+key,"");persist();
+            }else{
+                String reason=error==null?"No speech":error.getMessage();
+                set(session(),"speechError_"+key,reason==null?"Unknown":reason);
+                persist();
+                notifyUser(tr("Una registrazione non è stata trascritta: ",
+                    "A recording could not be transcribed: ",
+                    "No se pudo transcribir una grabación: ")+reason);
+            }
+            if(index+1<pending.size())retryPendingSequentially(pending,index+1);
+            else {render();notifyUser(tr("Recupero delle registrazioni terminato.",
+                "Recording recovery completed.",
+                "Recuperación de grabaciones terminada."));}
         });
     }
     private void playRecording(String key){
