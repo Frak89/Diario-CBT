@@ -1,0 +1,26 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.frak89.diariocbt'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.frak89.diariocbt'
+        minSdk 28
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            // Development test-only signature. Do not use for production release.
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+dependencies {
+    implementation 'com.google.mediapipe:tasks-genai:0.10.35'
+}
