@@ -1,7 +1,7 @@
 name: Android FULL AI offline APK
 on:
   push:
-    branches: [main, feature/modern-ui-integrated-qwen3]
+    branches: [main, feature/modern-ui-integrated-qwen3, feature/rating-buttons-0-10]
   workflow_dispatch:
 jobs:
   full_ai:
