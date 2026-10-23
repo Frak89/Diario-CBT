@@ -24,7 +24,7 @@ object AiRuntime {
                 engine.initialize()
                 initialized = true
                 val response = engine.createConversation().use { conversation ->
-                    conversation.sendMessage(prompt).text
+                    conversation.sendMessage(prompt).toString()
                 }
                 return@runBlocking response.toString().trim()
             } catch (error: Throwable) {
