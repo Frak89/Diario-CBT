@@ -338,10 +338,12 @@ public class MainActivity extends Activity {
         String status=entry.optString("reportStatus","not_started");
         boolean ai=entry.optBoolean("aiReport",false);
         boolean generating="generating".equals(status);
+        String provider=entry.optString("aiProvider",AiEngine.provider(this));
+        String modelTitle="groq".equals(provider)?"GROQ GPT-OSS 120B":"QWEN3 OFFLINE";
         TextView title=label(generating?
-          tr("IA QWEN3 • ANALISI IN CORSO","QWEN3 AI • ANALYZING","IA QWEN3 • ANALIZANDO"):
-          ai?tr("OSSERVAZIONE PERSONALIZZATA • IA QWEN3",
-                "PERSONALIZED OBSERVATION • QWEN3 AI","OBSERVACIÓN PERSONALIZADA • IA QWEN3"):
+          modelTitle+" • "+tr("ANALISI IN CORSO","ANALYZING","ANALIZANDO"):
+          ai?tr("OSSERVAZIONE PERSONALIZZATA • ","PERSONALIZED REFLECTION • ",
+                "OBSERVACIÓN PERSONALIZADA • ")+modelTitle:
           tr("RIFLESSIONE GUIDATA • NON GENERATA DALL'IA",
                 "GUIDED REFLECTION • NOT AI-GENERATED",
                 "REFLEXIÓN GUIADA • NO GENERADA POR IA"),16,CYAN,true);
@@ -350,9 +352,9 @@ public class MainActivity extends Activity {
             ProgressBar busy=new ProgressBar(this);
             panel.addView(busy,new LinearLayout.LayoutParams(d(44),d(44)));
             TextView inProgress=label(tr(
-                "Qwen3 sta leggendo le risposte sul telefono e preparando osservazioni e suggerimenti. Il tempo dipende dalle prestazioni del dispositivo.",
-                "Qwen3 is analyzing answers locally and preparing suggestions. Processing time depends on your device.",
-                "Qwen3 está analizando las respuestas en el teléfono. El tiempo depende del dispositivo."),15,FG,false);
+                "L'IA sta preparando osservazioni e suggerimenti. Può richiedere qualche istante.",
+                "The selected AI is generating your reflection and suggestions.",
+                "La IA seleccionada está preparando la observación y los consejos."),15,FG,false);
             panel.addView(inProgress);space(panel,15);
         }else{
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
@@ -372,11 +374,11 @@ public class MainActivity extends Activity {
                 panel.addView(hear);space(panel,12);
             }
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
-                Button retry=button(AiEngine.available(this)?
+                Button retry=button(AiEngine.reportAvailable(this)?
                    tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
                    tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
                 retry.setOnClickListener(v->{
-                    if(AiEngine.available(this))completeAndAnalyze();
+                    if(AiEngine.reportAvailable(this))completeAndAnalyze();
                     else downloadBuiltInModel();
                 });panel.addView(retry);space(panel,12);
             }
@@ -462,7 +464,7 @@ public class MainActivity extends Activity {
         if(history==null){history=new JSONObject();set(document,"history",history);}
         set(history,date,true);
         JSONObject entry=session();
-        if(!AiEngine.available(this)){
+        if(!AiEngine.reportAvailable(this)){
             set(entry,"reportStatus","missing");
             set(entry,"aiError",tr("Modello Qwen3 non ancora pronto. Puoi attivarlo qui sotto.",
               "Qwen3 model not yet ready. Activate it below.",
@@ -474,6 +476,7 @@ public class MainActivity extends Activity {
         completingSession=true;
         final String analysisDate=date;
         set(entry,"reportStatus","generating");
+        set(entry,"aiProvider",AiEngine.provider(this));
         set(entry,"report","");
         set(entry,"aiError","");
         set(entry,"aiReport",false);
@@ -952,15 +955,16 @@ public class MainActivity extends Activity {
            "Activar IA Qwen3 integrada (~614 MB)"),false);
         importButton.setOnClickListener(v->downloadBuiltInModel());
         body.addView(importButton);space(body,7);
-        Button testAi=button(tr("Verifica il funzionamento dell'IA sul telefono",
-             "Test AI on this device","Probar la IA en este teléfono"),false);
+        Button testAi=button(tr("Verifica l'IA selezionata (Qwen3/Groq)",
+             "Test selected AI (Qwen3/Groq)","Probar la IA elegida (Qwen3/Groq)"),false);
         testAi.setOnClickListener(v->{
-            if(!AiEngine.available(this)){
-                notifyUser(tr("Modello Qwen3 non ancora pronto.",
-                    "Qwen3 model not ready.","El modelo Qwen3 no está listo."));return;
+            if(!AiEngine.reportAvailable(this)){
+                notifyUser(tr("Attiva Qwen3 oppure Groq (con chiave e consenso), poi salva.",
+                    "Enable Qwen3 or Groq (key and consent), then save.",
+                    "Activa Qwen3 o Groq (clave y consentimiento) y guarda."));return;
             }
-            notifyUser(tr("Verifica IA locale in corso…","Testing local AI…",
-              "Probando IA local…"));
+            notifyUser(tr("Verifica IA in corso…","Testing AI…",
+              "Probando IA…"));
             AiEngine.encouragement(this,lang,document.optString("diagnosis",""),
                 document.optString("goals",""),(answer,error)->{
                 if(isFinishing())return;
@@ -1019,7 +1023,7 @@ public class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
     private void offerBuiltInAI(){
-        if(isFinishing()||AiEngine.available(this))return;
+        if(isFinishing()||AiEngine.reportAvailable(this))return;
         if(ModelManager.bundled(this)){
             downloadBuiltInModel();return;
         }
