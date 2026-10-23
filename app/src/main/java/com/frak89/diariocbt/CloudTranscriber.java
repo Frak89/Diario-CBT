@@ -30,7 +30,8 @@ public final class CloudTranscriber {
     public interface Callback { void done(String text, Exception error); }
     private static final ExecutorService QUEUE=Executors.newSingleThreadExecutor();
     private static final Handler MAIN=new Handler(Looper.getMainLooper());
-    private static final String ENDPOINT="https://api.openai.com/v1/audio/transcriptions";
+    private static final String OPENAI_ENDPOINT="https://api.openai.com/v1/audio/transcriptions";
+    private static final String GROQ_ENDPOINT="https://api.groq.com/openai/v1/audio/transcriptions";
     private static final long MAX_BYTES=24L*1024*1024;
     private CloudTranscriber(){}
     /** Sanitized API diagnosis only. Never include request headers, secrets or recordings. */
@@ -121,28 +122,31 @@ public final class CloudTranscriber {
             describeError(status,code,type,language,retryAfter));
     }
 
-    public static void transcribe(File audio,String lang,String apiKey,Callback callback){
+    public static void transcribe(File audio,String lang,String apiKey,String provider,Callback callback){
         QUEUE.execute(()->{
             String result=null;Exception error=null;
-            try{result=request(audio,lang,apiKey);}
+            try{result=request(audio,lang,apiKey,provider);}
             catch(Exception e){error=e;}
             final String text=result;final Exception issue=error;
             MAIN.post(()->callback.done(text,issue));
         });
     }
-    private static String request(File input,String lang,String apiKey) throws Exception {
+    private static String request(File input,String lang,String apiKey,String provider) throws Exception {
+        boolean groq="groq".equals(provider);
+        if(!groq && !"openai".equals(provider))throw new IOException("Unsupported transcription provider");
         if(input==null||!input.isFile()||input.length()==0)
             throw new IOException("Audio recording is missing.");
         if(input.length()>MAX_BYTES)
             throw new IOException("Recording exceeds the transcription service file limit (24 MiB).");
-        if(apiKey==null||!apiKey.startsWith("sk-")||apiKey.length()<12)
-            throw new IOException("Configure your personal transcription API key in Settings.");
+        if(apiKey==null||apiKey.length()<16||(groq?!apiKey.startsWith("gsk_"):!apiKey.startsWith("sk-")))
+            throw new IOException("Configure a valid "+(groq?"Groq (gsk_...)":"OpenAI (sk-...)")+" API key in Settings.");
         String language=("en".equals(lang)||"es".equals(lang))?lang:"it";
         String boundary="----CBT-"+UUID.randomUUID().toString().replace("-","");
+        String model=groq?"whisper-large-v3":"gpt-4o-mini-transcribe";
         byte[] begin=(
             "--"+boundary+"\r\n"+
             "Content-Disposition: form-data; name=\"model\"\r\n\r\n"+
-            "gpt-4o-mini-transcribe\r\n"+
+            model+"\r\n"+
             "--"+boundary+"\r\n"+
             "Content-Disposition: form-data; name=\"language\"\r\n\r\n"+
             language+"\r\n"+
@@ -153,7 +157,7 @@ public final class CloudTranscriber {
             "Content-Disposition: form-data; name=\"file\"; filename=\"recording.m4a\"\r\n"+
             "Content-Type: audio/mp4\r\n\r\n").getBytes(StandardCharsets.UTF_8);
         byte[] finish=("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8);
-        HttpsURLConnection connection=(HttpsURLConnection)new URL(ENDPOINT).openConnection();
+        HttpsURLConnection connection=(HttpsURLConnection)new URL(groq?GROQ_ENDPOINT:OPENAI_ENDPOINT).openConnection();
         connection.setConnectTimeout(20000);
         connection.setReadTimeout(120000);
         connection.setRequestMethod("POST");

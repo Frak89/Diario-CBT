@@ -73,3 +73,16 @@ v0.2.0 prototipo. Modifiche sviluppate nel branch `feature/modern-ui-integrated-
 **Not included**: any free, shared transcription API service, or a guarantee that a user's API billing/credential already exists. Without setup, REC continues to preserve audio but makes no false promise of automatic transcription.
 
 **Existing data**: do not uninstall the current APK just to update, unless you have safely backed up its local diary/audio. GitHub Actions tests use an ephemeral debug signing key. These APKs may not be installable over a prior test build.
+
+
+## v0.2.7 — Groq Free Tier audio + optional GPT-OSS 120B journal analysis
+- GroqCloud **Free Plan** uses rate limits rather than prepaid API credit. Sign up and create a free API key at https://console.groq.com/keys . Groq's free tier is not unlimited, may change, and returns HTTP 429 after limits.
+- **Whisper Large V3** `whisper-large-v3` transcribes M4A recordings in Italian, English and Spanish via `https://api.groq.com/openai/v1/audio/transcriptions`. Select Groq or OpenAI under Settings → Online Audio Transcription. Groq is the default for new installations. Existing OpenAI API keys remain stored separately.
+- The user must provide their own Groq key (`gsk_...`) in Settings; there are no shared secrets in the public APK. Groq and OpenAI keys are both encrypted with the existing journal's Android Keystore AES-GCM mechanism and are never printed in error dialogs.
+- **Explicit per-provider voice-consent** is required before recording uploads. Changing providers invalidates the prior provider's consent. Recorded M4A remains in private app storage if a service is unavailable or rate-limited.
+- **Optional Groq GPT-OSS 120B** online CBT reflection and personalized splash encouragement are available independently of local Qwen3. They are OFF by default and require a **distinct opt-in consent** because the diary's full text, personal goals, and any user-declared diagnosis are sent to Groq's API when a session completes. For privacy, local Qwen3 remains the default unless cloud consent is enabled.
+- Groq's current data and retention rules are explained at https://console.groq.com/docs/your-data . A limited Groq Free Tier should not be presented as medical advice or unlimited free healthcare.
+- The local Qwen3 Full AI APK still includes a model for offline use, but can use Groq only when explicitly selected.
+- Both providers' microphone uploads require an Internet connection. OpenAI's HTTP429 credit/billing problem is not solved by switching the same key: Groq uses its own free-tier account/key.
+
+Development builds are signed with an ephemeral debug key; do not uninstall a previous app containing sensitive journal content unless backups are available. Device inference and cloud requests require runtime testing beyond CI compilation.

@@ -338,10 +338,12 @@ public class MainActivity extends Activity {
         String status=entry.optString("reportStatus","not_started");
         boolean ai=entry.optBoolean("aiReport",false);
         boolean generating="generating".equals(status);
+        String provider=entry.optString("aiProvider",AiEngine.provider(this));
+        String modelTitle="groq".equals(provider)?"GROQ GPT-OSS 120B":"QWEN3 OFFLINE";
         TextView title=label(generating?
-          tr("IA QWEN3 • ANALISI IN CORSO","QWEN3 AI • ANALYZING","IA QWEN3 • ANALIZANDO"):
-          ai?tr("OSSERVAZIONE PERSONALIZZATA • IA QWEN3",
-                "PERSONALIZED OBSERVATION • QWEN3 AI","OBSERVACIÓN PERSONALIZADA • IA QWEN3"):
+          modelTitle+" • "+tr("ANALISI IN CORSO","ANALYZING","ANALIZANDO"):
+          ai?tr("OSSERVAZIONE PERSONALIZZATA • ","PERSONALIZED REFLECTION • ",
+                "OBSERVACIÓN PERSONALIZADA • ")+modelTitle:
           tr("RIFLESSIONE GUIDATA • NON GENERATA DALL'IA",
                 "GUIDED REFLECTION • NOT AI-GENERATED",
                 "REFLEXIÓN GUIADA • NO GENERADA POR IA"),16,CYAN,true);
@@ -350,9 +352,9 @@ public class MainActivity extends Activity {
             ProgressBar busy=new ProgressBar(this);
             panel.addView(busy,new LinearLayout.LayoutParams(d(44),d(44)));
             TextView inProgress=label(tr(
-                "Qwen3 sta leggendo le risposte sul telefono e preparando osservazioni e suggerimenti. Il tempo dipende dalle prestazioni del dispositivo.",
-                "Qwen3 is analyzing answers locally and preparing suggestions. Processing time depends on your device.",
-                "Qwen3 está analizando las respuestas en el teléfono. El tiempo depende del dispositivo."),15,FG,false);
+                "L'IA sta preparando osservazioni e suggerimenti. Può richiedere qualche istante.",
+                "The selected AI is generating your reflection and suggestions.",
+                "La IA seleccionada está preparando la observación y los consejos."),15,FG,false);
             panel.addView(inProgress);space(panel,15);
         }else{
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
@@ -372,11 +374,11 @@ public class MainActivity extends Activity {
                 panel.addView(hear);space(panel,12);
             }
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
-                Button retry=button(AiEngine.available(this)?
+                Button retry=button(AiEngine.reportAvailable(this)?
                    tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
                    tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
                 retry.setOnClickListener(v->{
-                    if(AiEngine.available(this))completeAndAnalyze();
+                    if(AiEngine.reportAvailable(this))completeAndAnalyze();
                     else downloadBuiltInModel();
                 });panel.addView(retry);space(panel,12);
             }
@@ -462,7 +464,7 @@ public class MainActivity extends Activity {
         if(history==null){history=new JSONObject();set(document,"history",history);}
         set(history,date,true);
         JSONObject entry=session();
-        if(!AiEngine.available(this)){
+        if(!AiEngine.reportAvailable(this)){
             set(entry,"reportStatus","missing");
             set(entry,"aiError",tr("Modello Qwen3 non ancora pronto. Puoi attivarlo qui sotto.",
               "Qwen3 model not yet ready. Activate it below.",
@@ -474,6 +476,7 @@ public class MainActivity extends Activity {
         completingSession=true;
         final String analysisDate=date;
         set(entry,"reportStatus","generating");
+        set(entry,"aiProvider",AiEngine.provider(this));
         set(entry,"report","");
         set(entry,"aiError","");
         set(entry,"aiReport",false);
@@ -619,9 +622,18 @@ public class MainActivity extends Activity {
             "Audio saved. Configure the API in Settings to transcribe it.",
             "Audio guardado. Configura la API en Ajustes para transcribirlo."));
     }
+    private String sttProvider(){
+        return getSharedPreferences("options",0).getString("stt_provider","groq");
+    }
+    private String sttKey(String provider){
+        return document.optString("groq".equals(provider)?"groqApiKey":"cloudSttApiKey","");
+    }
     private boolean cloudSttReady(){
-        return getSharedPreferences("options",0).getBoolean("cloud_stt_consent",false)
-           && !document.optString("cloudSttApiKey","").isEmpty();
+        android.content.SharedPreferences p=getSharedPreferences("options",0);
+        String provider=sttProvider();
+        return p.getBoolean("cloud_stt_consent",false)
+            && provider.equals(p.getString("stt_consent_provider",""))
+            && !sttKey(provider).isEmpty();
     }
     private void toggleRecord(String key,Button btn){
         if(recorder!=null){stopRecording();return;}
@@ -636,9 +648,9 @@ public class MainActivity extends Activity {
              .setTitle(tr("Trascrizione automatica online","Automatic online transcription",
                "Transcripción automática en línea"))
              .setMessage(tr(
-               "Il servizio vocale Android non accetta la registrazione (errore 5). Per trascrivere davvero i file M4A serve un servizio esterno. L'app può usare OpenAI Speech-to-Text, configurando una tua chiave API e il consenso all'invio dell'audio. L'uso API può avere un costo; non è incluso nell'abbonamento ChatGPT. Puoi comunque registrare solo l'audio.",
-               "The Android speech service rejected recorded audio (error 5). To transcribe saved M4A files, configure your own OpenAI Speech-to-Text API credential and consent to sending audio. API usage may cost money and is separate from ChatGPT subscriptions. You can still record audio only.",
-               "El servicio de voz Android rechazó el audio grabado (error 5). Para transcribir archivos M4A configura una clave personal de OpenAI Speech-to-Text y autoriza el envío de audio. Puede tener coste adicional y no está incluido en ChatGPT. También puedes grabar solo audio."))
+               "Per trascrivere automaticamente i file M4A puoi configurare Groq Whisper (piano gratuito con limiti) oppure OpenAI (API a pagamento). Serve la chiave personale del servizio selezionato e il consenso a inviare l'audio; puoi anche registrare senza trascrizione.",
+               "To automatically transcribe saved M4A files, use Groq Whisper (free tier with limits) or OpenAI (paid API), with your personal API key and explicit consent to upload the recording. You can still record without transcription.",
+               "Para transcribir grabaciones M4A puedes usar Groq Whisper (plan gratuito con límites) u OpenAI (API de pago). Se necesita una clave personal y consentimiento para enviar el audio. También puedes grabar sin transcripción."))
              .setPositiveButton(tr("Configura","Configure","Configurar"),(dialog,which)->showSettings())
              .setNeutralButton(tr("Solo registra","Record audio only","Solo grabar"),
                 (dialog,which)->beginAudioRecording(key,btn))
@@ -683,12 +695,13 @@ public class MainActivity extends Activity {
         }
         transcriptRunning=true;
         final String recordedDate=date;
-        final String apiKey=document.optString("cloudSttApiKey","");
+        final String provider=sttProvider();
+        final String apiKey=sttKey(provider);
         final String selectedLang=lang;
         notifyUser(tr("Audio salvato. Trascrizione online in corso…",
             "Audio saved. Online transcription in progress…",
             "Audio guardado. Transcripción online en curso…"));
-        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,(transcript,error)->{
+        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,provider,(transcript,error)->{
             transcriptRunning=false;
             if(isFinishing())return;
             JSONObject sessions=document.optJSONObject("sessions");
@@ -711,11 +724,13 @@ public class MainActivity extends Activity {
                             "La grabación permanece en el teléfono. Reintenta desde Ajustes después de resolver el problema."))
                         .setNegativeButton(tr("Chiudi","Close","Cerrar"),null);
                     if(api.httpStatus==429){
-                        warning.setPositiveButton(tr("Controlla fatturazione API",
-                            "Check API billing","Comprobar facturación API"),(dialog,which)->{
-                            startActivity(new Intent(Intent.ACTION_VIEW,
-                                Uri.parse("https://platform.openai.com/settings/organization/billing/overview")));
-                        });
+                        warning.setPositiveButton("groq".equals(provider)?
+                            tr("Limiti gratuiti Groq","Groq free limits","Límites gratis Groq"):
+                            tr("Controlla fatturazione API","Check API billing","Comprobar facturación API"),
+                            (dialog,which)->startActivity(new Intent(Intent.ACTION_VIEW,
+                              Uri.parse("groq".equals(provider)?
+                                "https://console.groq.com/settings/limits":
+                                "https://platform.openai.com/settings/organization/billing/overview"))));
                     }
                     warning.show();
                 }else{
@@ -780,9 +795,10 @@ public class MainActivity extends Activity {
         if(index>=pending.size()||isFinishing())return;
         String key=pending.get(index);
         File recorded=audioFile(key);
-        String apiKey=document.optString("cloudSttApiKey","");
+        String provider=sttProvider();
+        String apiKey=sttKey(provider);
         String selectedLang=lang;
-        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,(text,error)->{
+        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,provider,(text,error)->{
             if(isFinishing())return;
             if(error==null&&text!=null&&!text.trim().isEmpty()){
                 appendTranscript(key,text,null);
@@ -831,41 +847,85 @@ public class MainActivity extends Activity {
         EditText goals=new EditText(this);goals.setTextColor(FG);
         goals.setText(document.optString("goals",""));body.addView(goals);space(body,14);
         android.content.SharedPreferences p=getSharedPreferences("options",0);
-        body.addView(label(tr("TRASCRIZIONE ONLINE (facoltativa)",
-            "ONLINE TRANSCRIPTION (optional)",
-            "TRANSCRIPCIÓN ONLINE (opcional)"),15,CYAN,true));
-        space(body,6);
-        body.addView(label(tr(
-           "Per trascrivere i file M4A useremo OpenAI Speech-to-Text (gpt-4o-mini-transcribe). È un servizio API separato da ChatGPT, potenzialmente a pagamento. Solo l'audio di una registrazione viene inviato quando lo autorizzi; il diario e la diagnosi non vengono inviati.",
-           "Recorded M4A files can be transcribed via OpenAI Speech-to-Text (gpt-4o-mini-transcribe). This is a separate potentially paid API service, not included in ChatGPT. Only recordings you authorize are sent; your journal and diagnosis are not uploaded.",
-           "Los audios M4A pueden transcribirse con OpenAI Speech-to-Text (gpt-4o-mini-transcribe). Es un servicio API separado y posiblemente de pago. Solo se envían grabaciones autorizadas, no el diario ni el diagnóstico."),13,SUB,false));
+        body.addView(label(tr("TRASCRIZIONE AUDIO ONLINE",
+          "ONLINE AUDIO TRANSCRIPTION","TRANSCRIPCIÓN DE AUDIO ONLINE"),15,CYAN,true));
         space(body,7);
+        body.addView(label(tr(
+            "Groq Whisper Large V3 ha un piano gratuito con limiti giornalieri: non richiede credito OpenAI. Richiede una chiave Groq gratuita. In alternativa resta OpenAI con fatturazione API.",
+            "Groq Whisper Large V3 has a daily-limited free tier. A free Groq API key is required; OpenAI paid API remains available.",
+            "Groq Whisper Large V3 tiene un plan gratuito con límites diarios y requiere una clave Groq. OpenAI de pago sigue disponible."),13,SUB,false));
+        space(body,7);
+        Spinner sttService=new Spinner(this);
+        sttService.setAdapter(new ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item,new String[]{
+              "Groq Whisper V3 — Free Tier","OpenAI Speech-to-Text — Paid API"}));
+        String selectedProvider=p.getString("stt_provider","groq");
+        sttService.setSelection("openai".equals(selectedProvider)?1:0);
+        body.addView(sttService);space(body,9);
+        Button groqWebsite=button(tr("Crea chiave gratuita su Groq",
+          "Get a free Groq API key","Obtener clave Groq gratuita"),false);
+        groqWebsite.setOnClickListener(v->startActivity(new Intent(Intent.ACTION_VIEW,
+            Uri.parse("https://console.groq.com/keys"))));
+        body.addView(groqWebsite);space(body,8);
+        EditText groqKey=new EditText(this);
+        groqKey.setTextColor(FG);groqKey.setHintTextColor(SUB);
+        groqKey.setSingleLine(true);
+        groqKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT|
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        groqKey.setHint(document.optString("groqApiKey","").isEmpty()?
+          "Groq API key (gsk_…)":
+          tr("Chiave Groq già cifrata — vuoto per conservarla",
+              "Groq key encrypted — leave blank to keep",
+              "Clave Groq cifrada — dejar en blanco para conservar"));
+        body.addView(groqKey);
+        CheckBox removeGroq=new CheckBox(this);removeGroq.setTextColor(FG);
+        removeGroq.setText(tr("Elimina chiave Groq","Delete Groq key","Eliminar clave Groq"));
+        body.addView(removeGroq);space(body,6);
         EditText cloudKey=new EditText(this);
-        cloudKey.setTextColor(FG);cloudKey.setHintTextColor(SUB);
-        cloudKey.setSingleLine(true);
-        cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT
-            |android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        cloudKey.setTextColor(FG);cloudKey.setHintTextColor(SUB);cloudKey.setSingleLine(true);
+        cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT|
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         cloudKey.setHint(document.optString("cloudSttApiKey","").isEmpty()?
-            tr("Inserisci chiave API personale (sk-...)",
-              "Enter your personal API key (sk-...)",
-              "Introduce tu clave API personal (sk-...)"):
-            tr("Chiave salvata e cifrata — lascia vuoto per conservarla",
-              "Encrypted key saved — leave blank to keep it",
-              "Clave cifrada guardada — dejar vacío para conservar"));
-        body.addView(cloudKey);space(body,3);
-        CheckBox removeKey=new CheckBox(this);
-        removeKey.setTextColor(FG);
-        removeKey.setText(tr("Elimina la chiave memorizzata",
-           "Delete stored API key","Eliminar clave API guardada"));
-        body.addView(removeKey);
-        CheckBox speechConsent=new CheckBox(this);
-        speechConsent.setTextColor(FG);
+          tr("Chiave OpenAI alternativa (sk-…)", "Alternative OpenAI key (sk-…)",
+            "Clave OpenAI alternativa (sk-…)"):
+          tr("Chiave OpenAI cifrata — vuoto per conservarla",
+            "OpenAI key encrypted — leave blank to keep",
+            "Clave OpenAI cifrada — dejar vacío para conservar"));
+        body.addView(cloudKey);
+        CheckBox removeKey=new CheckBox(this);removeKey.setTextColor(FG);
+        removeKey.setText(tr("Elimina chiave OpenAI","Delete OpenAI key","Eliminar clave OpenAI"));
+        body.addView(removeKey);space(body,7);
+        CheckBox speechConsent=new CheckBox(this);speechConsent.setTextColor(FG);
         speechConsent.setText(tr(
-           "Autorizzo l'invio delle registrazioni audio al servizio OpenAI per la trascrizione",
-           "I allow recorded audio to be sent to OpenAI for transcription",
-           "Autorizo enviar las grabaciones a OpenAI para transcribirlas"));
-        speechConsent.setChecked(p.getBoolean("cloud_stt_consent",false));
-        body.addView(speechConsent);space(body,12);
+          "Autorizzo a inviare il file audio al servizio di trascrizione selezionato",
+          "I consent to send my recording to the selected transcription service",
+          "Autorizo enviar mi audio al servicio de transcripción seleccionado"));
+        speechConsent.setChecked(p.getBoolean("cloud_stt_consent",false)
+            && selectedProvider.equals(p.getString("stt_consent_provider","")));
+        sttService.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(android.widget.AdapterView<?> parent,View view,int pos,long id){
+                String provider=pos==0?"groq":"openai";
+                speechConsent.setChecked(p.getBoolean("cloud_stt_consent",false)
+                  && provider.equals(p.getString("stt_consent_provider","")));
+            }
+            public void onNothingSelected(android.widget.AdapterView<?> parent){}
+        });
+        body.addView(speechConsent);space(body,11);
+        body.addView(label(tr("OSSERVAZIONE IA ONLINE (FACOLTATIVA)",
+              "ONLINE AI REFLECTION (OPTIONAL)",
+              "OBSERVACIÓN IA ONLINE (OPCIONAL)"),15,CYAN,true));
+        space(body,5);
+        body.addView(label(tr(
+          "Groq GPT-OSS 120B può generare l'osservazione finale anche senza Qwen3 locale. Attivandolo, ogni volta che premi Termina vengono inviati a Groq i testi del diario, gli obiettivi e la diagnosi eventualmente dichiarata. Puoi lasciarlo disattivato e usare solo Qwen3 offline.",
+          "Groq GPT-OSS 120B can produce the final reflection without Qwen3 locally. Enabling this sends your diary text, goals and any declared diagnosis to Groq whenever you complete a session. Leave it off to use local Qwen3.",
+          "Groq GPT-OSS 120B puede generar la reflexión sin Qwen3 local. Al activarlo se envían a Groq el diario, objetivos y cualquier diagnóstico declarado al terminar. Desactívalo para usar Qwen3 local."),13,SUB,false));
+        CheckBox onlineAiConsent=new CheckBox(this);onlineAiConsent.setTextColor(FG);
+        onlineAiConsent.setText(tr(
+          "Autorizzo l'invio dei contenuti CBT e della diagnosi dichiarata a Groq per l'IA online",
+          "I consent to sending CBT journal content and declared diagnosis to Groq for online AI",
+          "Autorizo enviar el diario CBT y diagnóstico declarado a Groq para IA online"));
+        onlineAiConsent.setChecked(p.getBoolean("groq_ai_consent",false));
+        body.addView(onlineAiConsent);space(body,12);
         CheckBox reminder=new CheckBox(this);reminder.setTextColor(FG);
         reminder.setText(tr("Promemoria giornaliero","Daily reminder","Recordatorio diario"));
         reminder.setChecked(p.getBoolean("enabled",false));body.addView(reminder);
@@ -895,15 +955,16 @@ public class MainActivity extends Activity {
            "Activar IA Qwen3 integrada (~614 MB)"),false);
         importButton.setOnClickListener(v->downloadBuiltInModel());
         body.addView(importButton);space(body,7);
-        Button testAi=button(tr("Verifica il funzionamento dell'IA sul telefono",
-             "Test AI on this device","Probar la IA en este teléfono"),false);
+        Button testAi=button(tr("Verifica l'IA selezionata (Qwen3/Groq)",
+             "Test selected AI (Qwen3/Groq)","Probar la IA elegida (Qwen3/Groq)"),false);
         testAi.setOnClickListener(v->{
-            if(!AiEngine.available(this)){
-                notifyUser(tr("Modello Qwen3 non ancora pronto.",
-                    "Qwen3 model not ready.","El modelo Qwen3 no está listo."));return;
+            if(!AiEngine.reportAvailable(this)){
+                notifyUser(tr("Attiva Qwen3 oppure Groq (con chiave e consenso), poi salva.",
+                    "Enable Qwen3 or Groq (key and consent), then save.",
+                    "Activa Qwen3 o Groq (clave y consentimiento) y guarda."));return;
             }
-            notifyUser(tr("Verifica IA locale in corso…","Testing local AI…",
-              "Probando IA local…"));
+            notifyUser(tr("Verifica IA in corso…","Testing AI…",
+              "Probando IA…"));
             AiEngine.encouragement(this,lang,document.optString("diagnosis",""),
                 document.optString("goals",""),(answer,error)->{
                 if(isFinishing())return;
@@ -930,11 +991,18 @@ public class MainActivity extends Activity {
             String typedKey=cloudKey.getText().toString().trim();
             if(removeKey.isChecked())set(document,"cloudSttApiKey","");
             else if(!typedKey.isEmpty())set(document,"cloudSttApiKey",typedKey);
+            String enteredGroq=groqKey.getText().toString().trim();
+            if(removeGroq.isChecked())set(document,"groqApiKey","");
+            else if(!enteredGroq.isEmpty())set(document,"groqApiKey",enteredGroq);
             if(!newDiag.equals(oldDiag)){set(document,"splashPhrase","");set(document,"splashDiagnosis","");}
             persist();
             String l=languages.getSelectedItemPosition()==1?"en":languages.getSelectedItemPosition()==2?"es":"it";
             p.edit().putString("lang",l).putBoolean("enabled",reminder.isChecked())
+                .putString("stt_provider",sttService.getSelectedItemPosition()==0?"groq":"openai")
+                .putString("stt_consent_provider",speechConsent.isChecked()?
+                    (sttService.getSelectedItemPosition()==0?"groq":"openai"):"")
                 .putBoolean("cloud_stt_consent",speechConsent.isChecked())
+                .putBoolean("groq_ai_consent",onlineAiConsent.isChecked())
                 .putBoolean("fullscreen",fullscreen.isChecked())
                 .putInt("hour",time[0]).putInt("minute",time[1]).apply();
             lang=l;ReminderReceiver.schedule(this);
@@ -955,7 +1023,7 @@ public class MainActivity extends Activity {
         dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
     private void offerBuiltInAI(){
-        if(isFinishing()||AiEngine.available(this))return;
+        if(isFinishing()||AiEngine.reportAvailable(this))return;
         if(ModelManager.bundled(this)){
             downloadBuiltInModel();return;
         }

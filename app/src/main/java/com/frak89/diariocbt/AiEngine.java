@@ -12,13 +12,26 @@ public final class AiEngine {
     private static final ExecutorService background=Executors.newSingleThreadExecutor();
     public static File modelFile(Context ctx) { return ModelManager.file(ctx); }
     public static boolean available(Context ctx) { return ModelManager.ready(ctx); }
+    public static boolean cloudEnabled(Context ctx) {
+        if(!ctx.getSharedPreferences("options",0).getBoolean("groq_ai_consent",false))return false;
+        String key=SecureStore.read(ctx).optString("groqApiKey","");
+        return key.startsWith("gsk_")&&key.length()>20;
+    }
+    public static boolean reportAvailable(Context ctx) {return cloudEnabled(ctx)||available(ctx);}
+    public static String provider(Context ctx) {return cloudEnabled(ctx)?"groq":"local";}
+
     private static void generate(Context context, String prompt, Callback callback) {
         Context app=context.getApplicationContext();
         background.execute(() -> {
             String answer=null; Exception issue=null;
             try {
-                if(!available(app)) throw new IllegalStateException("Qwen3 on-device model not ready");
-                answer=AiRuntime.generate(app,modelFile(app).getAbsolutePath(),prompt);
+                if(cloudEnabled(app)){
+                    String key=SecureStore.read(app).optString("groqApiKey","");
+                    answer=GroqAiEngine.generate(key,prompt);
+                } else {
+                    if(!available(app)) throw new IllegalStateException("Qwen3 on-device model not ready");
+                    answer=AiRuntime.generate(app,modelFile(app).getAbsolutePath(),prompt);
+                }
             } catch(Throwable ex) {issue=ex instanceof Exception?(Exception)ex:new IllegalStateException(ex);}
             String result=answer;Exception failure=issue;
             new Handler(Looper.getMainLooper()).post(() -> callback.done(result,failure));
