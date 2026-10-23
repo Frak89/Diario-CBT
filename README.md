@@ -86,3 +86,14 @@ v0.2.0 prototipo. Modifiche sviluppate nel branch `feature/modern-ui-integrated-
 - Both providers' microphone uploads require an Internet connection. OpenAI's HTTP429 credit/billing problem is not solved by switching the same key: Groq uses its own free-tier account/key.
 
 Development builds are signed with an ephemeral debug key; do not uninstall a previous app containing sensitive journal content unless backups are available. Device inference and cloud requests require runtime testing beyond CI compilation.
+
+## v0.2.8 — Riepilogo giornaliero, punteggio, serie, incoraggiamento e TTS
+
+- **Termina e mostra riepilogo** salva la giornata una sola volta e apre il riepilogo con il **punteggio CBT 0–10** (completamento di sei esercizi, non diagnosi), la **serie di giorni consecutivi**, il verdetto salvato e un incoraggiamento utile.
+- Riaprire il riepilogo **non rigenera l'analisi IA**. Un pulsante separato «Rigenera analisi IA» richiede conferma prima di sostituire il testo. Se la generazione è ancora in corso, il riepilogo mostra lo stato senza creare una seconda richiesta.
+- Una nuova frase di incoraggiamento è generata dalla stessa IA già scelta, facendo riferimento a un'azione o sforzo presente nel diario e proponendo un passo piccolo e concreto. È memorizzata nel diario del giorno e usata per lo splash successivo. Se l'IA non è disponibile si mostra una proposta guidata, chiaramente distinta, ricavata dalle risposte scritte.
+- La sintesi vocale rimuove Markdown (per esempio **asterischi**, intestazioni, link) e divide i testi lunghi in blocchi compatibili con TextToSpeech. Il testo originale dell'osservazione rimane visualizzato e salvato.
+- Il riepilogo giornaliero rimane consultabile riaprendo l'app, con un tasto per rivedere o correggere le risposte.
+- I test unitari Java controllano la pulizia di Markdown e i blocchi TTS; GitHub Actions ora esegue test e build.
+
+**Attenzione:** tutte le build sono APK di prova firmati in CI con chiave debug non stabile; non cancellare l'installazione corrente con dati importanti senza backup. Il test automatizzato non certifica il funzionamento dell'IA sul Pixel 7 Pro.
