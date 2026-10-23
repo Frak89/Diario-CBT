@@ -28,6 +28,9 @@ public class MainActivity extends Activity {
       CYAN=0xff62e8ec, GOLD=0xffffc347, PURPLE=0xffaa85fa;
     private boolean changingPage=false;
     private boolean completingSession=false;
+    private boolean transcriptRunning=false;
+    private boolean finishAfterTranscript=false;
+    private ScrollView activeScroll;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private JSONObject document;
     private String date,lang;
@@ -49,6 +52,7 @@ public class MainActivity extends Activity {
     private void notifyUser(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         getWindow().setStatusBarColor(BACK);getWindow().setNavigationBarColor(BACK);
         date=LocalDate.now().toString();lang=I18n.lang(this);
         try{document=SecureStore.read(this);}
@@ -154,8 +158,12 @@ public class MainActivity extends Activity {
     private void render(){
         if(document==null)return;
         building=true;currentFields.clear();currentKeys.clear();
-        ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setBackground(pageBackground());
-        layout=col();layout.setPadding(d(18),d(16),d(18),d(24));sc.addView(layout);
+        ScrollView sc=new ScrollView(this);
+        sc.setFillViewport(true);sc.setSmoothScrollingEnabled(true);
+        sc.setClipToPadding(false);
+        sc.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        sc.setBackground(pageBackground());activeScroll=sc;
+        layout=col();layout.setPadding(d(18),d(16),d(18),d(140));sc.addView(layout);
         setContentView(sc);
         LinearLayout top=row();
         TextView brand=label("◈  DIARIO CBT",23,GOLD,true);
@@ -225,11 +233,16 @@ public class MainActivity extends Activity {
         answer.setMinLines(2);answer.setMaxLines(6);
         answer.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|
             android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        answer.setHint(tr("Scrivi qui oppure usa il microfono…","Type or use the microphone…",
-          "Escribe aquí o usa el micrófono…"));
+        answer.setHint(I18n.hint(lang,step,qIndex));
+        answer.setOnFocusChangeListener((view,hasFocus)->{
+            if(hasFocus){
+                answer.postDelayed(()->scrollFieldIntoView(answer),260);
+            }
+        });
         answer.setText(session().optString(key,""));
         currentFields.add(answer);currentKeys.add(key);
         card.addView(answer,new LinearLayout.LayoutParams(-1,-2));space(card,6);
+        if(step==2&&qIndex==2)addEmotionChoices(card,answer);
         answer.addTextChangedListener(new TextWatcher(){
             @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
             @Override public void onTextChanged(CharSequence s,int start,int before,int count){
@@ -240,21 +253,68 @@ public class MainActivity extends Activity {
         LinearLayout tools=row();
         Button listen=button("🔊",false);listen.setContentDescription(tr("Ascolta domanda","Read question aloud","Escuchar pregunta"));
         listen.setOnClickListener(v->speak(question));tools.addView(listen,new LinearLayout.LayoutParams(0,d(45),1));
-        Button dictate=button("🎙",false);dictate.setContentDescription(tr("Dettatura locale","On-device dictation","Dictado local"));
-        dictate.setOnClickListener(v->dictate(answer));tools.addView(dictate,new LinearLayout.LayoutParams(0,d(45),1));
         Button rec=button("⏺",false);rec.setContentDescription(tr("Registra voce","Record voice","Grabar voz"));
         rec.setOnClickListener(v->toggleRecord(key,rec));tools.addView(rec,new LinearLayout.LayoutParams(0,d(45),1));
         Button play=button("▶",false);play.setContentDescription(tr("Riascolta risposta","Replay recording","Reproducir grabación"));
         play.setOnClickListener(v->playRecording(key));tools.addView(play,new LinearLayout.LayoutParams(0,d(45),1));
-        Button transcribe=button("✍",false);
-        transcribe.setContentDescription(tr("Trascrivi audio registrato","Transcribe recorded audio","Transcribir audio grabado"));
-        transcribe.setOnClickListener(v->transcribeAudio(key,answer));
-        tools.addView(transcribe,new LinearLayout.LayoutParams(0,d(45),1));
         Button readAnswer=button("🔉",false);
         readAnswer.setContentDescription(tr("Ascolta la risposta","Read answer aloud","Escuchar respuesta"));
         readAnswer.setOnClickListener(v->speak(answer.getText().toString()));
         tools.addView(readAnswer,new LinearLayout.LayoutParams(0,d(45),1));
-        card.addView(tools);space(card,18);
+        card.addView(tools);
+        TextView recHelp=label(tr("REC registra e trascrive automaticamente dopo lo stop (con consenso).",
+              "REC automatically transcribes after stopping (with consent).",
+              "REC transcribe automáticamente al terminar (con consentimiento)."),12,SUB,false);
+        recHelp.setPadding(d(3),d(5),0,d(13));card.addView(recHelp);space(card,12);
+    }
+    private void scrollFieldIntoView(EditText field){
+        if(activeScroll==null||!field.isAttachedToWindow())return;
+        android.graphics.Rect r=new android.graphics.Rect(0,0,field.getWidth(),field.getHeight()+d(125));
+        activeScroll.offsetDescendantRectToMyCoords(field,r);
+        int destination=activeScroll.getScrollY()+r.bottom-activeScroll.getHeight()+d(20);
+        if(destination>activeScroll.getScrollY())
+            activeScroll.smoothScrollTo(0,Math.max(0,destination));
+    }
+    private void addEmotionChoices(LinearLayout card,EditText answer){
+        TextView options=label(tr("Scegli le emozioni (anche più di una)",
+          "Choose emotions (you can pick more than one)",
+          "Elige emociones (puedes elegir varias)"),14,CYAN,true);
+        options.setPadding(0,d(7),0,d(7));card.addView(options);
+        String[] names=I18n.emotionOptions(lang);
+        java.util.ArrayList<Button> chips=new java.util.ArrayList<>();
+        for(int i=0;i<names.length;i+=2){
+            LinearLayout line=row();
+            for(int j=i;j<Math.min(i+2,names.length);j++){
+                String option=names[j];
+                Button choice=button(option,false);
+                choice.setTextSize(12);
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,d(46),1);
+                p.setMargins(d(2),d(2),d(2),d(2));line.addView(choice,p);chips.add(choice);
+                choice.setOnClickListener(v->{
+                    String value=answer.getText().toString();
+                    if(value.contains(option)){
+                        String clean=value.replace(option+"\n","").replace("\n"+option,"").replace(option,"").trim();
+                        answer.setText(clean);
+                    }else{
+                        answer.setText(value.isEmpty()?option:value+"\n"+option);
+                    }
+                    answer.setSelection(answer.length());
+                    for(Button b:chips){
+                        boolean selected=answer.getText().toString().contains(b.getText().toString());
+                        b.setBackground(bg(selected?CYAN:CARD,selected?CYAN:0xff35405e));
+                        b.setTextColor(selected?BACK:FG);
+                    }
+                });
+            }
+            card.addView(line);
+        }
+        for(Button b:chips){
+            boolean selected=answer.getText().toString().contains(b.getText().toString());
+            if(selected){
+                b.setBackground(bg(CYAN,CYAN));b.setTextColor(BACK);
+            }
+        }
+        space(card,10);
     }
     private void showFinal(LinearLayout panel) {
         JSONObject s=session();
