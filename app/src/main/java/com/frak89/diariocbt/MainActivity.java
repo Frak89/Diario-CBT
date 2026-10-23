@@ -28,6 +28,9 @@ public class MainActivity extends Activity {
       CYAN=0xff62e8ec, GOLD=0xffffc347, PURPLE=0xffaa85fa;
     private boolean changingPage=false;
     private boolean completingSession=false;
+    private boolean transcriptRunning=false;
+    private boolean finishAfterTranscript=false;
+    private ScrollView activeScroll;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private JSONObject document;
     private String date,lang;
@@ -49,6 +52,7 @@ public class MainActivity extends Activity {
     private void notifyUser(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         getWindow().setStatusBarColor(BACK);getWindow().setNavigationBarColor(BACK);
         date=LocalDate.now().toString();lang=I18n.lang(this);
         try{document=SecureStore.read(this);}
@@ -59,6 +63,14 @@ public class MainActivity extends Activity {
             return;
         }
         if(state!=null) step=state.getInt("step",0);
+        JSONObject unfinished=session();
+        if("generating".equals(unfinished.optString("reportStatus",""))){
+            set(unfinished,"reportStatus","interrupted");
+            set(unfinished,"aiError",tr("Analisi interrotta. Tocca «Riprova l'analisi IA».",
+              "Interrupted analysis. Tap Retry AI reflection.",
+              "Análisis interrumpido. Pulsa Reintentar IA."));
+            persist();
+        }
         tts=new TextToSpeech(this,status->{if(status==TextToSpeech.SUCCESS) configureVoice();});
         render();
         new Handler(Looper.getMainLooper()).postDelayed(this::offerBuiltInAI,700);
@@ -154,8 +166,12 @@ public class MainActivity extends Activity {
     private void render(){
         if(document==null)return;
         building=true;currentFields.clear();currentKeys.clear();
-        ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setBackground(pageBackground());
-        layout=col();layout.setPadding(d(18),d(16),d(18),d(24));sc.addView(layout);
+        ScrollView sc=new ScrollView(this);
+        sc.setFillViewport(true);sc.setSmoothScrollingEnabled(true);
+        sc.setClipToPadding(false);
+        sc.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        sc.setBackground(pageBackground());activeScroll=sc;
+        layout=col();layout.setPadding(d(18),d(16),d(18),d(140));sc.addView(layout);
         setContentView(sc);
         LinearLayout top=row();
         TextView brand=label("◈  DIARIO CBT",23,GOLD,true);
@@ -225,11 +241,16 @@ public class MainActivity extends Activity {
         answer.setMinLines(2);answer.setMaxLines(6);
         answer.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|
             android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-        answer.setHint(tr("Scrivi qui oppure usa il microfono…","Type or use the microphone…",
-          "Escribe aquí o usa el micrófono…"));
+        answer.setHint(I18n.hint(lang,step,qIndex));
+        answer.setOnFocusChangeListener((view,hasFocus)->{
+            if(hasFocus){
+                answer.postDelayed(()->scrollFieldIntoView(answer),260);
+            }
+        });
         answer.setText(session().optString(key,""));
         currentFields.add(answer);currentKeys.add(key);
         card.addView(answer,new LinearLayout.LayoutParams(-1,-2));space(card,6);
+        if(step==2&&qIndex==2)addEmotionChoices(card,answer);
         answer.addTextChangedListener(new TextWatcher(){
             @Override public void beforeTextChanged(CharSequence s,int start,int count,int after){}
             @Override public void onTextChanged(CharSequence s,int start,int before,int count){
@@ -240,47 +261,128 @@ public class MainActivity extends Activity {
         LinearLayout tools=row();
         Button listen=button("🔊",false);listen.setContentDescription(tr("Ascolta domanda","Read question aloud","Escuchar pregunta"));
         listen.setOnClickListener(v->speak(question));tools.addView(listen,new LinearLayout.LayoutParams(0,d(45),1));
-        Button dictate=button("🎙",false);dictate.setContentDescription(tr("Dettatura locale","On-device dictation","Dictado local"));
-        dictate.setOnClickListener(v->dictate(answer));tools.addView(dictate,new LinearLayout.LayoutParams(0,d(45),1));
         Button rec=button("⏺",false);rec.setContentDescription(tr("Registra voce","Record voice","Grabar voz"));
         rec.setOnClickListener(v->toggleRecord(key,rec));tools.addView(rec,new LinearLayout.LayoutParams(0,d(45),1));
         Button play=button("▶",false);play.setContentDescription(tr("Riascolta risposta","Replay recording","Reproducir grabación"));
         play.setOnClickListener(v->playRecording(key));tools.addView(play,new LinearLayout.LayoutParams(0,d(45),1));
-        Button transcribe=button("✍",false);
-        transcribe.setContentDescription(tr("Trascrivi audio registrato","Transcribe recorded audio","Transcribir audio grabado"));
-        transcribe.setOnClickListener(v->transcribeAudio(key,answer));
-        tools.addView(transcribe,new LinearLayout.LayoutParams(0,d(45),1));
         Button readAnswer=button("🔉",false);
         readAnswer.setContentDescription(tr("Ascolta la risposta","Read answer aloud","Escuchar respuesta"));
         readAnswer.setOnClickListener(v->speak(answer.getText().toString()));
         tools.addView(readAnswer,new LinearLayout.LayoutParams(0,d(45),1));
-        card.addView(tools);space(card,18);
+        card.addView(tools);
+        TextView recHelp=label(tr("REC registra e trascrive automaticamente dopo lo stop (con consenso).",
+              "REC automatically transcribes after stopping (with consent).",
+              "REC transcribe automáticamente al terminar (con consentimiento)."),12,SUB,false);
+        recHelp.setPadding(d(3),d(5),0,d(13));card.addView(recHelp);space(card,12);
+    }
+    private void scrollFieldIntoView(EditText field){
+        if(activeScroll==null||!field.isAttachedToWindow())return;
+        android.graphics.Rect r=new android.graphics.Rect(0,0,field.getWidth(),field.getHeight()+d(125));
+        activeScroll.offsetDescendantRectToMyCoords(field,r);
+        int destination=activeScroll.getScrollY()+r.bottom-activeScroll.getHeight()+d(20);
+        if(destination>activeScroll.getScrollY())
+            activeScroll.smoothScrollTo(0,Math.max(0,destination));
+    }
+    private void addEmotionChoices(LinearLayout card,EditText answer){
+        TextView options=label(tr("Scegli le emozioni (anche più di una)",
+          "Choose emotions (you can pick more than one)",
+          "Elige emociones (puedes elegir varias)"),14,CYAN,true);
+        options.setPadding(0,d(7),0,d(7));card.addView(options);
+        String[] names=I18n.emotionOptions(lang);
+        java.util.ArrayList<Button> chips=new java.util.ArrayList<>();
+        for(int i=0;i<names.length;i+=2){
+            LinearLayout line=row();
+            for(int j=i;j<Math.min(i+2,names.length);j++){
+                String option=names[j];
+                Button choice=button(option,false);
+                choice.setTextSize(12);
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,d(46),1);
+                p.setMargins(d(2),d(2),d(2),d(2));line.addView(choice,p);chips.add(choice);
+                choice.setOnClickListener(v->{
+                    String value=answer.getText().toString();
+                    if(value.contains(option)){
+                        String clean=value.replace(option+"\n","").replace("\n"+option,"").replace(option,"").trim();
+                        answer.setText(clean);
+                    }else{
+                        answer.setText(value.isEmpty()?option:value+"\n"+option);
+                    }
+                    answer.setSelection(answer.length());
+                    for(Button b:chips){
+                        boolean selected=answer.getText().toString().contains(b.getText().toString());
+                        b.setBackground(bg(selected?CYAN:CARD,selected?CYAN:0xff35405e));
+                        b.setTextColor(selected?BACK:FG);
+                    }
+                });
+            }
+            card.addView(line);
+        }
+        for(Button b:chips){
+            boolean selected=answer.getText().toString().contains(b.getText().toString());
+            if(selected){
+                b.setBackground(bg(CYAN,CYAN));b.setTextColor(BACK);
+            }
+        }
+        space(card,10);
     }
     private void showFinal(LinearLayout panel) {
-        JSONObject s=session();
-        TextView score=label(tr("Indicatore pratica CBT","CBT practice index","Índice de práctica CBT")+"   "+score()+"/10",
-         19,GOLD,true);panel.addView(score);space(panel,6);
-        TextView explain=label(tr("Misura gli esercizi compilati, non la salute mentale o il valore personale.",
-             "Measures completed reflection tasks, not mental health or personal worth.",
-             "Mide ejercicios completados, no la salud mental ni el valor personal."),
-              13,SUB,false);panel.addView(explain);space(panel,18);
-        space(panel,8);
-        String report=s.optString("report","");
-        boolean ai=s.optBoolean("aiReport",false);
-        TextView title=label(ai?tr("OSSERVAZIONE IA LOCALE","LOCAL AI OBSERVATION","OBSERVACIÓN IA LOCAL"):
-           tr("RIFLESSIONE GUIDATA (senza IA)","GUIDED REFLECTION (no AI)","REFLEXIÓN GUIADA (sin IA)"),
-            16,CYAN,true);panel.addView(title);space(panel,10);
-        TextView observations=label(report.isEmpty()?tr(
-           "Completa il diario e premi «Concludi e analizza».",
-           "Finish the journal and tap Complete and reflect.",
-           "Termina el diario y pulsa Terminar y analizar."):report,16,FG,false);
-        panel.addView(observations);space(panel,12);
-        Button hear=button("🔊 "+tr("Ascolta l'osservazione","Listen to reflection","Escuchar reflexión"),false);
-        hear.setOnClickListener(v->speak(observations.getText().toString()));panel.addView(hear);
-        space(panel,15);
-        TextView note=label(tr("Non è una diagnosi o un giudizio clinico.",
-            "Not a diagnosis or clinical judgement.","No es un diagnóstico ni un juicio clínico."),12,SUB,false);
-        panel.addView(note);
+        JSONObject entry=session();
+        TextView score=label(tr("Esercizi CBT completati","Completed CBT exercises","Ejercicios CBT completados")
+            +"   "+score()+"/10",19,GOLD,true);
+        panel.addView(score);space(panel,6);
+        panel.addView(label(tr("Questo punteggio conta gli esercizi svolti: non valuta una diagnosi o la persona.",
+           "This counts completed tasks, not a diagnosis or a person's worth.",
+           "Cuenta las tareas completadas, no una diagnosis ni el valor de la persona."),13,SUB,false));
+        space(panel,22);
+        String report=entry.optString("report","");
+        String status=entry.optString("reportStatus","not_started");
+        boolean ai=entry.optBoolean("aiReport",false);
+        boolean generating="generating".equals(status);
+        TextView title=label(generating?
+          tr("IA QWEN3 • ANALISI IN CORSO","QWEN3 AI • ANALYZING","IA QWEN3 • ANALIZANDO"):
+          ai?tr("OSSERVAZIONE PERSONALIZZATA • IA QWEN3",
+                "PERSONALIZED OBSERVATION • QWEN3 AI","OBSERVACIÓN PERSONALIZADA • IA QWEN3"):
+          tr("RIFLESSIONE GUIDATA • NON GENERATA DALL'IA",
+                "GUIDED REFLECTION • NOT AI-GENERATED",
+                "REFLEXIÓN GUIADA • NO GENERADA POR IA"),16,CYAN,true);
+        panel.addView(title);space(panel,12);
+        if(generating){
+            ProgressBar busy=new ProgressBar(this);
+            panel.addView(busy,new LinearLayout.LayoutParams(d(44),d(44)));
+            TextView inProgress=label(tr(
+                "Qwen3 sta leggendo le risposte sul telefono e preparando osservazioni e suggerimenti. Il tempo dipende dalle prestazioni del dispositivo.",
+                "Qwen3 is analyzing answers locally and preparing suggestions. Processing time depends on your device.",
+                "Qwen3 está analizando las respuestas en el teléfono. El tiempo depende del dispositivo."),15,FG,false);
+            panel.addView(inProgress);space(panel,15);
+        }else{
+            if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
+                String detail=entry.optString("aiError","");
+                TextView warning=label(tr("IA non completata: ","AI did not complete: ",
+                    "La IA no terminó: ")+detail,14,0xffffbd9b,false);
+                panel.addView(warning);space(panel,14);
+            }
+            TextView observation=label(report.isEmpty()?
+               tr("Premi «Termina» per generare l'osservazione.",
+                  "Tap Done to generate your reflection.",
+                  "Pulsa Terminar para generar la observación."):report,16,FG,false);
+            panel.addView(observation);space(panel,14);
+            if(!report.isEmpty()){
+                Button hear=button("🔊 "+tr("Ascolta l'osservazione","Listen to reflection","Escuchar observación"),false);
+                hear.setOnClickListener(v->speak(observation.getText().toString()));
+                panel.addView(hear);space(panel,12);
+            }
+            if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
+                Button retry=button(AiEngine.available(this)?
+                   tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
+                   tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
+                retry.setOnClickListener(v->{
+                    if(AiEngine.available(this))completeAndAnalyze();
+                    else downloadBuiltInModel();
+                });panel.addView(retry);space(panel,12);
+            }
+        }
+        panel.addView(label(tr("Non è una diagnosi né una valutazione medica.",
+          "This is not a medical diagnosis or assessment.",
+          "No es un diagnóstico ni una valoración médica."),12,SUB,false));
     }
     private int score(){
         JSONObject s=session();int n=0;
@@ -324,83 +426,105 @@ public class MainActivity extends Activity {
         if(completingSession)return;
         if(recorder!=null)stopRecording();
         saveDraft();
-        ArrayList<String> toTranscribe=new ArrayList<>();
-        for(int page=0;page<6;page++){
-            for(int n=0;n<3;n++){
-                if(page==1||(page==4&&n==2))continue;
-                String key="p"+page+"_"+n;
-                if(audioFile(key).isFile()&&!session().optBoolean("transcribed_"+key,false))
-                    toTranscribe.add(key);
-            }
-        }
-        if(toTranscribe.isEmpty()||!RecordingTranscriber.supported(this)){
-            if(!toTranscribe.isEmpty())notifyUser(tr(
-              "La trascrizione offline non è disponibile su questo dispositivo; gli audio restano salvati.",
-              "Offline transcription is unavailable; recordings remain saved.",
-              "La transcripción sin conexión no está disponible; los audios siguen guardados."));
-            completeAndAnalyze();return;
-        }
-        completingSession=true;
-        notifyUser(tr("Trascrivo le registrazioni prima del riepilogo…",
-          "Transcribing recordings before your reflection…",
-          "Transcribiendo las grabaciones antes del resumen…"));
-        finishTranscriptions(toTranscribe,0);
-    }
-    private void finishTranscriptions(ArrayList<String> keys,int position){
-        if(isFinishing())return;
-        if(position>=keys.size()){
-            completingSession=false;
-            completeAndAnalyze();
+        if(transcriptRunning){
+            finishAfterTranscript=true;
+            notifyUser(tr("Attendo la trascrizione, poi preparo l'osservazione.",
+              "Waiting for transcription before generating the reflection.",
+              "Esperando la transcripción para generar la observación."));
             return;
         }
-        String key=keys.get(position);
-        RecordingTranscriber.start(this,audioFile(key),I18n.locale(lang),(text,error)->{
-            if(!isFinishing()&&error==null&&text!=null&&!text.trim().isEmpty()){
-                appendTranscript(key,text,null);
-            }
-            finishTranscriptions(keys,position+1);
-        });
+        completeAndAnalyze();
     }
-    private void appendTranscript(String key,String transcript,EditText activeField){
+    private void appendTranscript(String key,String transcript,EditText field){
+        if(transcript==null||transcript.trim().isEmpty())return;
         JSONObject values=session();
-        String before=values.optString(key,"").trim();
-        String after=before.isEmpty()?transcript.trim():before+"\n"+transcript.trim();
-        set(values,key,after);
-        set(values,"transcribed_"+key,true);
-        persist();
-        if(activeField!=null&&activeField.isAttachedToWindow()){
-            activeField.setText(after);activeField.setSelection(activeField.length());
+        String existing=values.optString(key,"").trim();
+        String updated=existing.isEmpty()?transcript.trim():existing+"\n"+transcript.trim();
+        set(values,key,updated);
+        set(values,"transcribed_"+key,true);persist();
+        if(field!=null&&field.isAttachedToWindow()){
+            field.setText(updated);field.setSelection(field.length());
+            scrollFieldIntoView(field);
         }
     }
+    private String shortAiError(Throwable error){
+        Throwable root=error;int tries=0;
+        while(root!=null&&root.getCause()!=null&&tries++<8)root=root.getCause();
+        String reason=root==null?"Unknown error":root.getClass().getSimpleName()+
+          (root.getMessage()==null?"":": "+root.getMessage());
+        return reason.length()>260?reason.substring(0,260):reason;
+    }
     private void completeAndAnalyze(){
+        if(completingSession)return;
         saveDraft();
         JSONObject history=document.optJSONObject("history");
         if(history==null){history=new JSONObject();set(document,"history",history);}
         set(history,date,true);
-        JSONObject s=session();
-        set(s,"report",fallback());set(s,"aiReport",false);persist();render();
+        JSONObject entry=session();
         if(!AiEngine.available(this)){
-            notifyUser(tr("Per una valutazione generativa, importa il modello IA nelle impostazioni.",
-              "Import a local AI model in Settings for a generated reflection.",
-              "Importa un modelo IA local en Ajustes para generar la reflexión."));
-            return;
+            set(entry,"reportStatus","missing");
+            set(entry,"aiError",tr("Modello Qwen3 non ancora pronto. Puoi attivarlo qui sotto.",
+              "Qwen3 model not yet ready. Activate it below.",
+              "El modelo Qwen3 no está preparado. Actívalo abajo."));
+            set(entry,"report",fallback());
+            set(entry,"aiReport",false);
+            persist();render();return;
         }
-        String d=document.optString("diagnosis",""),g=document.optString("goals","");
+        completingSession=true;
+        final String analysisDate=date;
+        set(entry,"reportStatus","generating");
+        set(entry,"report","");
+        set(entry,"aiError","");
+        set(entry,"aiReport",false);
+        persist();render();
+        String diagnosis=document.optString("diagnosis",""),goals=document.optString("goals","");
         String diary=diaryText();
-        notifyUser(tr("Analisi IA offline in corso…","Offline AI reflection…","Análisis IA sin conexión…"));
-        AiEngine.report(this,lang,d,g,diary,(report,error)->{
+        new Handler(Looper.getMainLooper()).postDelayed(()->{
+            if(isFinishing()||!completingSession)return;
+            JSONObject inProgress=session();
+            if(!"generating".equals(inProgress.optString("reportStatus","")))return;
+            completingSession=false;
+            set(inProgress,"reportStatus","error");
+            set(inProgress,"aiError",tr(
+                "La generazione sta impiegando troppo tempo su questo dispositivo. Prova il test IA nelle impostazioni.",
+                "AI generation is taking too long on this device. Try the AI test in Settings.",
+                "La generación tarda demasiado en este dispositivo. Prueba la IA desde Ajustes."));
+            set(inProgress,"report",fallback());
+            set(inProgress,"aiReport",false);
+            persist();if(step==6)render();
+        },180000);
+        AiEngine.report(this,lang,diagnosis,goals,diary,(response,error)->{
+            if(!"generating".equals(entry.optString("reportStatus","")))return;
+            completingSession=false;
             if(isFinishing())return;
-            if(error!=null||report==null||report.trim().isEmpty()){
-                notifyUser(tr("IA non disponibile: mantenuta la riflessione guidata.",
-                   "AI unavailable: guided reflection kept.","IA no disponible: se mantiene la reflexión guiada."));
-                return;
+            JSONObject sessions=document.optJSONObject("sessions");
+            JSONObject target=sessions==null?null:sessions.optJSONObject(analysisDate);
+            if(target==null)return;
+            String cleaned=response==null?"":response.replaceAll("(?s)<think>.*?</think>","").trim();
+            if(error!=null||cleaned.isEmpty()){
+                set(target,"reportStatus","error");
+                set(target,"aiReport",false);
+                set(target,"aiError",error!=null?shortAiError(error):
+                    tr("Il modello non ha restituito testo utilizzabile.",
+                       "The model returned no usable text.",
+                       "El modelo no devolvió texto utilizable."));
+                set(target,"report",fallback());
+            }else{
+                set(target,"report",cleaned);
+                set(target,"reportStatus","done");
+                set(target,"aiReport",true);
+                set(target,"aiError","");
             }
-            set(session(),"report",report.trim());set(session(),"aiReport",true);persist();
-            if(step==6)render();
-            AiEngine.encouragement(this,lang,d,g,(phrase,pError)->{
+            persist();if(step==6)render();
+            if(!target.optBoolean("aiReport",false))return;
+            AiEngine.encouragement(this,lang,diagnosis,goals,(phrase,pError)->{
+                if(isFinishing())return;
                 if(pError==null&&phrase!=null&&!phrase.trim().isEmpty()&&phrase.length()<240){
-                    set(document,"splashPhrase",phrase.trim());
-                    set(document,"splashDiagnosis",d);persist();
+                    String message=phrase.replaceAll("(?s)<think>.*?</think>","").trim();
+                    if(!message.isEmpty()){
+                        set(document,"splashPhrase",message);
+                        set(document,"splashDiagnosis",diagnosis);persist();
+                    }
                 }
             });
         });
@@ -473,25 +597,60 @@ public class MainActivity extends Activity {
     }
     private void stopRecording(){
         if(recorder==null)return;
+        String endedKey=recordingKey;boolean saved=true;
         try{recorder.stop();}
-        catch(Exception ex){if(recordingKey!=null)audioFile(recordingKey).delete();}
-        finally{recorder.release();recorder=null;}
+        catch(Exception ex){
+            saved=false;
+            if(endedKey!=null)audioFile(endedKey).delete();
+        }finally{recorder.release();recorder=null;}
         if(recordingPulse!=null){recordingPulse.cancel();recordingPulse=null;}
         if(activeRecordingButton!=null){
             recordingVisual(activeRecordingButton,false);
             activeRecordingButton.setAlpha(1f);
         }
         activeRecordingButton=null;recordingKey=null;
-    }
-    private void toggleRecord(String key,Button btn){
-        if(recorder!=null){
-            stopRecording();
-            notifyUser(tr("Audio salvato. Premi ✍ per trascriverlo.",
-                "Recording saved. Tap ✍ to transcribe.",
-                "Audio guardado. Pulsa ✍ para transcribir."));
+        if(!saved||endedKey==null){
+            notifyUser(tr("Registrazione non riuscita.","Recording failed.","Falló la grabación."));
             return;
         }
+        if(getSharedPreferences("options",0).getBoolean("online_stt_consent",false))
+            autoTranscribe(endedKey);
+        else notifyUser(tr("Audio salvato (trascrizione online disattivata).",
+            "Audio saved (online transcription disabled).",
+            "Audio guardado (transcripción en línea desactivada)."));
+    }
+    private void toggleRecord(String key,Button btn){
+        if(recorder!=null){stopRecording();return;}
+        if(transcriptRunning){
+            notifyUser(tr("La registrazione precedente è ancora in trascrizione.",
+                "The previous recording is still being transcribed.",
+                "La grabación anterior sigue transcribiéndose."));return;
+        }
         if(!micPermission())return;
+        android.content.SharedPreferences p=getSharedPreferences("options",0);
+        if(!p.getBoolean("stt_choice_made",false)){
+            new AlertDialog.Builder(this)
+              .setTitle(tr("Registrazione e trascrizione","Recording and transcription","Grabación y transcripción"))
+              .setMessage(tr(
+                 "Il pulsante REC salva una copia della registrazione sul telefono. Per ottenere automaticamente il testo, il servizio vocale di Android può inviare l'audio a un fornitore esterno tramite Internet. I dati del diario non vengono inviati dall'IA locale. Vuoi consentire la trascrizione online?",
+                 "REC saves an audio copy on your phone. For automatic transcription, Android's speech service may send recorded audio to an external provider over the Internet. The local AI does not upload your journal. Allow online transcription?",
+                 "REC guarda una copia del audio en el teléfono. Para transcribir automáticamente, el servicio de voz de Android puede enviar el audio a un proveedor externo por Internet. La IA local no envía tu diario. ¿Permitir transcripción en línea?"))
+              .setPositiveButton(tr("Consenti e registra","Allow and record","Permitir y grabar"),(dialog,which)->{
+                  p.edit().putBoolean("online_stt_consent",true).putBoolean("stt_choice_made",true).apply();
+                  beginAudioRecording(key,btn);
+              })
+              .setNeutralButton(tr("Solo registra","Record only","Solo grabar"),(dialog,which)->{
+                  p.edit().putBoolean("online_stt_consent",false).putBoolean("stt_choice_made",true).apply();
+                  beginAudioRecording(key,btn);
+              })
+              .setNegativeButton(tr("Annulla","Cancel","Cancelar"),null)
+              .show();
+            return;
+        }
+        beginAudioRecording(key,btn);
+    }
+    private void beginAudioRecording(String key,Button btn){
+        if(recorder!=null||transcriptRunning||!micPermission())return;
         try{
             recorder=Build.VERSION.SDK_INT>=31?new MediaRecorder(this):new MediaRecorder();
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
@@ -501,52 +660,55 @@ public class MainActivity extends Activity {
             recorder.setAudioSamplingRate(16000);
             recorder.setOutputFile(audioFile(key).getAbsolutePath());
             recorder.prepare();recorder.start();
-            recordingKey=key;activeRecordingButton=btn;
-            recordingVisual(btn,true);
+            set(session(),"transcribed_"+key,false);persist();
+            recordingKey=key;activeRecordingButton=btn;recordingVisual(btn,true);
             recordingPulse=android.animation.ObjectAnimator.ofFloat(btn,"alpha",1.0f,0.60f,1.0f);
             recordingPulse.setDuration(900);
             recordingPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE);
             recordingPulse.start();
         }catch(Exception ex){
             if(recorder!=null){recorder.release();recorder=null;}
-            recordingKey=null;activeRecordingButton=null;
-            recordingVisual(btn,false);
+            recordingKey=null;activeRecordingButton=null;recordingVisual(btn,false);
             notifyUser(tr("Impossibile registrare.","Could not record.","No se pudo grabar."));
         }
     }
-    private void transcribeAudio(String key,EditText answer){
-        if(recorder!=null){
-            notifyUser(tr("Ferma la registrazione prima di trascriverla.",
-                "Stop recording before transcribing.",
-                "Detén la grabación antes de transcribir."));return;
-        }
+    private void autoTranscribe(String key){
         File recording=audioFile(key);
-        if(!recording.isFile()||recording.length()<100){
-            notifyUser(tr("Non trovo una registrazione per questa risposta.",
-                "No recording for this answer.",
-                "No hay una grabación para esta respuesta."));return;
-        }
+        if(!recording.isFile())return;
         if(!RecordingTranscriber.supported(this)){
-            notifyUser(tr("Trascrizione audio offline non supportata dal riconoscitore installato.",
-                "Offline transcription is not supported by the installed speech recognizer.",
-                "El reconocedor instalado no admite transcripción sin conexión."));return;
+            set(session(),"speechError_"+key,"NO_RECOGNITION_SERVICE");persist();
+            notifyUser(tr("Servizio vocale Android non disponibile. Audio salvato.",
+                "Android speech service is unavailable. Audio saved.",
+                "Servicio de voz de Android no disponible. Audio guardado."));
+            return;
         }
-        notifyUser(tr("Trascrizione audio locale in corso…",
-            "On-device recording transcription…",
-            "Transcripción local de audio en curso…"));
-        RecordingTranscriber.start(this,recording,I18n.locale(lang),(text,error)->{
+        transcriptRunning=true;
+        notifyUser(tr("Audio salvato. Trascrizione automatica in corso…",
+            "Audio saved. Transcribing automatically…",
+            "Audio guardado. Transcripción automática en curso…"));
+        RecordingTranscriber.start(this,recording,I18n.locale(lang),(transcript,error)->{
+            transcriptRunning=false;
             if(isFinishing())return;
-            if(error!=null||text==null||text.trim().isEmpty()){
-                notifyUser(tr("Trascrizione non riuscita. L'audio è conservato.",
-                    "Transcription failed. The recording was kept.",
-                    "Falló la transcripción. Se guardó la grabación.")+
-                    (error!=null?" ("+error.getMessage()+")":""));
-                return;
+            if(error!=null||transcript==null||transcript.trim().isEmpty()){
+                String detail=error==null?"No speech recognized":error.getMessage();
+                set(session(),"speechError_"+key,detail==null?"Unknown":detail.substring(0,Math.min(detail.length(),120)));
+                persist();
+                notifyUser(tr("Audio conservato. Trascrizione non riuscita: ",
+                    "Audio preserved. Transcription failed: ",
+                    "Audio conservado. Falló la transcripción: ")+detail);
+            }else{
+                EditText visibleField=null;
+                for(int i=0;i<currentKeys.size();i++)
+                    if(currentKeys.get(i).equals(key)){visibleField=currentFields.get(i);break;}
+                appendTranscript(key,transcript,visibleField);
+                notifyUser(tr("Testo trascritto e salvato nel diario.",
+                    "Transcribed text saved to your journal.",
+                    "Texto transcrito y guardado en el diario."));
             }
-            appendTranscript(key,text,answer);
-            notifyUser(tr("Trascrizione salvata nel diario.",
-                "Transcript saved to your journal.",
-                "Transcripción guardada en el diario."));
+            if(finishAfterTranscript){
+                finishAfterTranscript=false;
+                completeAndAnalyze();
+            }
         });
     }
     private void playRecording(String key){
@@ -579,6 +741,14 @@ public class MainActivity extends Activity {
         EditText goals=new EditText(this);goals.setTextColor(FG);
         goals.setText(document.optString("goals",""));body.addView(goals);space(body,14);
         android.content.SharedPreferences p=getSharedPreferences("options",0);
+        CheckBox speechConsent=new CheckBox(this);
+        speechConsent.setTextColor(FG);
+        speechConsent.setText(tr(
+           "Trascrizione automatica tramite servizio vocale online Android (audio potenzialmente inviato al fornitore)",
+           "Automatic transcription via Android online speech service (audio may be sent to its provider)",
+           "Transcripción automática con el servicio de voz online de Android (el audio puede enviarse al proveedor)"));
+        speechConsent.setChecked(p.getBoolean("online_stt_consent",false));
+        body.addView(speechConsent);space(body,12);
         CheckBox reminder=new CheckBox(this);reminder.setTextColor(FG);
         reminder.setText(tr("Promemoria giornaliero","Daily reminder","Recordatorio diario"));
         reminder.setChecked(p.getBoolean("enabled",false));body.addView(reminder);
@@ -607,7 +777,27 @@ public class MainActivity extends Activity {
            tr("Attiva IA Qwen3 integrata (~614 MB)","Activate built-in Qwen3 AI (~614 MB)",
            "Activar IA Qwen3 integrada (~614 MB)"),false);
         importButton.setOnClickListener(v->downloadBuiltInModel());
-        body.addView(importButton);space(body,12);
+        body.addView(importButton);space(body,7);
+        Button testAi=button(tr("Verifica il funzionamento dell'IA sul telefono",
+             "Test AI on this device","Probar la IA en este teléfono"),false);
+        testAi.setOnClickListener(v->{
+            if(!AiEngine.available(this)){
+                notifyUser(tr("Modello Qwen3 non ancora pronto.",
+                    "Qwen3 model not ready.","El modelo Qwen3 no está listo."));return;
+            }
+            notifyUser(tr("Verifica IA locale in corso…","Testing local AI…",
+              "Probando IA local…"));
+            AiEngine.encouragement(this,lang,document.optString("diagnosis",""),
+                document.optString("goals",""),(answer,error)->{
+                if(isFinishing())return;
+                new AlertDialog.Builder(this)
+                    .setTitle(error==null?tr("Test IA riuscito","AI test succeeded","Prueba IA correcta"):
+                      tr("Errore di inferenza IA","AI inference error","Error de inferencia IA"))
+                    .setMessage(error==null?answer:shortAiError(error))
+                    .setPositiveButton("OK",null).show();
+            });
+        });
+        body.addView(testAi);space(body,12);
         Button save=button(tr("Salva impostazioni","Save settings","Guardar ajustes"),true);
         body.addView(save);
         AlertDialog dialog=new AlertDialog.Builder(this).setView(sc).create();
@@ -619,6 +809,8 @@ public class MainActivity extends Activity {
             persist();
             String l=languages.getSelectedItemPosition()==1?"en":languages.getSelectedItemPosition()==2?"es":"it";
             p.edit().putString("lang",l).putBoolean("enabled",reminder.isChecked())
+                .putBoolean("online_stt_consent",speechConsent.isChecked())
+                .putBoolean("stt_choice_made",true)
                 .putBoolean("fullscreen",fullscreen.isChecked())
                 .putInt("hour",time[0]).putInt("minute",time[1]).apply();
             lang=l;ReminderReceiver.schedule(this);
@@ -636,6 +828,7 @@ public class MainActivity extends Activity {
             dialog.dismiss();configureVoice();render();
         });
         dialog.show();
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
     private void offerBuiltInAI(){
         if(isFinishing()||AiEngine.available(this))return;

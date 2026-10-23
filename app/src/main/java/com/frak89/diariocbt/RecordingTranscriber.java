@@ -31,10 +31,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Optional transcription of existing AAC/M4A recordings using Android's ON-DEVICE recognizer.
+ * Automatic transcription of an existing AAC/M4A recording through the Android speech service.
  * Audio is decoded to PCM within private cache and fed to EXTRA_AUDIO_SOURCE (API 33+).
- * Availability is dependent on the installed speech service; providers may ignore injected
- * audio or lack segmented recognition. Never fall back to an online speech recognizer.
+ * The installed service may choose remote processing, and may not accept injected
+ * audio or segmented recognition. Explicit cloud-processing consent is handled in MainActivity.
  */
 public final class RecordingTranscriber {
     public interface Callback { void onComplete(String transcript,Exception error); }
@@ -42,13 +42,13 @@ public final class RecordingTranscriber {
     private static final Handler MAIN=new Handler(Looper.getMainLooper());
     private RecordingTranscriber() {}
     public static boolean supported(Context context){
-        return Build.VERSION.SDK_INT>=33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(context);
+        return Build.VERSION.SDK_INT>=33 && SpeechRecognizer.isRecognitionAvailable(context);
     }
     public static void start(Context context, File input, Locale language, Callback callback){
         Context app=context.getApplicationContext();
         if(!supported(app)){
             MAIN.post(()->callback.onComplete(null,new IllegalStateException(
-                "On-device recorded-audio recognition is not available on this Android device.")));
+                "Android speech recognition cannot transcribe recorded audio on this device.")));
             return;
         }
         if(input==null||!input.isFile()){
@@ -169,17 +169,20 @@ public final class RecordingTranscriber {
         void start(){
             try{
                 pipe=ParcelFileDescriptor.createPipe();
-                recognizer=SpeechRecognizer.createOnDeviceSpeechRecognizer(context);
+                recognizer=SpeechRecognizer.createSpeechRecognizer(context);
                 recognizer.setRecognitionListener(this);
                 Intent request=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
                 request.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
                 request.putExtra(RecognizerIntent.EXTRA_LANGUAGE,language.toLanguageTag());
+                // Allow the default speech service to use the network when it supports it.
+                request.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE,false);
+                request.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS,true);
                 request.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE,pipe[0]);
                 request.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT,source.channels);
                 request.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE,source.sampleRate);
                 request.putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING,AudioFormat.ENCODING_PCM_16BIT);
                 request.putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION,RecognizerIntent.EXTRA_AUDIO_SOURCE);
-                timeout=()->finish(null,new IOException("On-device transcription timeout"));
+                timeout=()->finish(null,new IOException("Speech service timed out while transcribing"));
                 MAIN.postDelayed(timeout,180000);
                 recognizer.startListening(request);
                 ParcelFileDescriptor writer=pipe[1];
