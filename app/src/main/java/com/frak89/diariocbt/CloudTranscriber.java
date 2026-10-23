@@ -33,6 +33,93 @@ public final class CloudTranscriber {
     private static final String ENDPOINT="https://api.openai.com/v1/audio/transcriptions";
     private static final long MAX_BYTES=24L*1024*1024;
     private CloudTranscriber(){}
+    /** Sanitized API diagnosis only. Never include request headers, secrets or recordings. */
+    public static final class ApiError extends IOException {
+        public final int httpStatus;
+        public final String apiCode;
+        public final String category;
+        public final String retryAfter;
+        ApiError(int status,String code,String category,String retryAfter,String message){
+            super(message);
+            this.httpStatus=status;
+            this.apiCode=code;
+            this.category=category;
+            this.retryAfter=retryAfter;
+        }
+        public boolean billingRelated(){
+            return "credit_balance_exhausted".equals(apiCode)
+                || "organization_spend_limit_exceeded".equals(apiCode)
+                || "project_spend_limit_exceeded".equals(apiCode)
+                || "organization_usage_limit_exceeded".equals(apiCode)
+                || "insufficient_quota".equals(apiCode)
+                || "insufficient_quota".equals(category);
+        }
+    }
+    private static String describeError(int http,String code,String type,String language,String retryAfter){
+        String it,en,es;
+        switch(code){
+            case "credit_balance_exhausted":
+                it="Credito API esaurito. Controlla il saldo o aggiungi credito su platform.openai.com.";
+                en="API credit balance exhausted. Check your balance on platform.openai.com.";
+                es="Crédito API agotado. Revisa el saldo en platform.openai.com.";break;
+            case "organization_spend_limit_exceeded":
+            case "project_spend_limit_exceeded":
+                it="Limite di spesa API raggiunto. Controlla i limiti di progetto e organizzazione.";
+                en="API spend limit reached. Check project and organization spending limits.";
+                es="Límite de gasto API alcanzado. Revisa los límites de proyecto y organización.";break;
+            case "organization_usage_limit_exceeded":
+                it="Limite di utilizzo API dell'organizzazione raggiunto.";
+                en="Organization API usage limit reached.";
+                es="Límite de uso API de la organización alcanzado.";break;
+            case "rate_limit_exceeded":
+                it="Troppe richieste API in poco tempo. Riprova quando il limite si azzera.";
+                en="Too many API requests. Retry once the rate limit resets.";
+                es="Demasiadas solicitudes API. Reintenta cuando el límite se restablezca.";break;
+            default:
+                if("insufficient_quota".equals(type)){
+                    it="Credito o quota API insufficiente. Controlla fatturazione e limiti API.";
+                    en="Insufficient API balance or quota. Check API billing and usage limits.";
+                    es="Saldo o cuota API insuficiente. Revisa facturación y límites de la API.";
+                }else if(http==429){
+                    it="HTTP 429: limite di richieste o credito API non disponibile. Verifica saldo e limiti.";
+                    en="HTTP 429: API rate limit or insufficient balance. Check balance and limits.";
+                    es="HTTP 429: límite de solicitudes o saldo insuficiente. Revisa el saldo y los límites.";
+                }else if(http==401||http==403){
+                    it="Chiave API non autorizzata. Controlla progetto, permessi e chiave.";
+                    en="API key not authorized. Check project, permissions and key.";
+                    es="Clave API no autorizada. Revisa el proyecto, permisos y clave.";
+                }else{
+                    it="Errore del servizio di trascrizione (HTTP "+http+").";
+                    en="Transcription service error (HTTP "+http+").";
+                    es="Error del servicio de transcripción (HTTP "+http+").";
+                }
+        }
+        String message=I18n.t(language,it,en,es);
+        if(http==429 && retryAfter!=null&&!retryAfter.isEmpty()&&retryAfter.matches("[0-9]{1,5}"))
+            message+=" "+I18n.t(language,"Attesa suggerita: ","Suggested wait: ","Espera sugerida: ")
+              +retryAfter+" s.";
+        return message+" [HTTP "+http+(code.isEmpty()?"":", "+code)+"]";
+    }
+    private static ApiError decodeError(HttpsURLConnection connection,int status,String language) {
+        String code="",type="";
+        try(java.io.InputStream stream=connection.getErrorStream()){
+            if(stream!=null){
+                byte[] data=new byte[16384];
+                int total=0,n;
+                while(total<data.length&&(n=stream.read(data,total,data.length-total))>0)total+=n;
+                String json=new String(data,0,total,StandardCharsets.UTF_8);
+                JSONObject error=new JSONObject(json).optJSONObject("error");
+                if(error!=null){
+                    code=error.optString("code","");
+                    type=error.optString("type","");
+                }
+            }
+        }catch(Exception ignored){}
+        if(code==null)code="";if(type==null)type="";
+        String retryAfter=connection.getHeaderField("Retry-After");
+        return new ApiError(status,code,type,retryAfter,
+            describeError(status,code,type,language,retryAfter));
+    }
 
     public static void transcribe(File audio,String lang,String apiKey,Callback callback){
         QUEUE.execute(()->{
@@ -85,12 +172,8 @@ public final class CloudTranscriber {
                 out.write(finish);out.flush();
             }
             int status=connection.getResponseCode();
-            if(status==401||status==403)
-                throw new IOException("API credential not authorized (HTTP "+status+").");
-            if(status==429)
-                throw new IOException("Transcription service rate limit or billing limit (HTTP 429).");
             if(status<200||status>=300)
-                throw new IOException("Transcription request rejected (HTTP "+status+").");
+                throw decodeError(connection,status,language);
             StringBuilder body=new StringBuilder();
             try(BufferedReader reader=new BufferedReader(new InputStreamReader(
                connection.getInputStream(),StandardCharsets.UTF_8))){
