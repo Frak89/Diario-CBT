@@ -10,6 +10,7 @@
         <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
     </queries>
     <application android:label="Diario CBT" android:theme="@android:style/Theme.Material.NoActionBar"
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="false" android:allowBackup="false" android:supportsRtl="true">
         <uses-native-library android:name="libOpenCL.so" android:required="false" />
         <uses-native-library android:name="libvndksupport.so" android:required="false" />

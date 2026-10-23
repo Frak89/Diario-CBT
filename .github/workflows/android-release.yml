@@ -1,7 +1,7 @@
 name: Android test release
 on:
   push:
-    branches: [main, feature/android-cbt-voice-ai, feature/modern-ui-integrated-qwen3, feature/rating-buttons-0-10]
+    branches: [main, feature/android-cbt-voice-ai, feature/modern-ui-integrated-qwen3, feature/rating-buttons-0-10, feature/splash-brain-launcher-icon]
   workflow_dispatch:
 jobs:
   android:
@@ -26,6 +26,6 @@ jobs:
         run: gradle --no-daemon :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: Diario-CBT-v0.2-test-release
+          name: Diario-CBT-v0.2.3-icon-test-release
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
