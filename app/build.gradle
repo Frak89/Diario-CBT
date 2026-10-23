@@ -1,4 +1,4 @@
-plugins { id 'com.android.application' }
+plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
 android {
     namespace 'com.frak89.diariocbt'
     compileSdk 36
@@ -6,13 +6,15 @@ android {
         applicationId 'com.frak89.diariocbt'
         minSdk 28
         targetSdk 36
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 3
+        versionName '0.2.1'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+    kotlinOptions { jvmTarget = '17' }
+    androidResources { noCompress += ['litertlm'] }
     buildTypes {
         release {
             minifyEnabled false
@@ -22,5 +24,6 @@ android {
     }
 }
 dependencies {
-    implementation 'com.google.mediapipe:tasks-genai:0.10.35'
+    implementation 'com.google.ai.edge.litertlm:litertlm-android:0.18.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
 }

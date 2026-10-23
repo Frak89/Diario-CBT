@@ -24,8 +24,9 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
-    private final int BACK=0xff0a0d20, CARD=0xff151b35, FG=0xffe8f3ff, SUB=0xffaab9d3,
-      CYAN=0xff63e8f2, GOLD=0xffffc54a, PURPLE=0xffad89ff;
+    private final int BACK=0xff080c1e, CARD=0xff141e35, FG=0xfff2f6ff, SUB=0xffa3b3d0,
+      CYAN=0xff62e8ec, GOLD=0xffffc347, PURPLE=0xffaa85fa;
+    private boolean changingPage=false;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private JSONObject document;
     private String date,lang;
@@ -57,6 +58,7 @@ public class MainActivity extends Activity {
         if(state!=null) step=state.getInt("step",0);
         tts=new TextToSpeech(this,status->{if(status==TextToSpeech.SUCCESS) configureVoice();});
         render();
+        new Handler(Looper.getMainLooper()).postDelayed(this::offerBuiltInAI,700);
     }
     @Override protected void onSaveInstanceState(Bundle state){saveDraft();state.putInt("step",step);super.onSaveInstanceState(state);}
     @Override protected void onPause(){saveDraft();super.onPause();}
@@ -97,16 +99,44 @@ public class MainActivity extends Activity {
         if(dirty)persist();
     }
     private void navigate(int target){
-        if(target<0||target>6)return;
-        saveDraft();step=target;render();
+        if(target<0||target>6||changingPage||target==step)return;
+        changingPage=true;
+        final int direction=target>step?1:-1;
+        saveDraft();
+        ViewGroup host=findViewById(android.R.id.content);
+        View previous=host.getChildCount()>0?host.getChildAt(0):null;
+        int width=getResources().getDisplayMetrics().widthPixels;
+        step=target;
+        render();
+        if(previous!=null){
+            View current=host.getChildAt(0);
+            host.addView(previous,0,new android.widget.FrameLayout.LayoutParams(-1,-1));
+            current.setTranslationX(direction*width*0.9f);
+            current.setAlpha(0.84f);
+            current.animate().translationX(0).alpha(1).setDuration(320)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+            previous.animate().translationX(-direction*width*0.33f).alpha(0f)
+                .setDuration(320).setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .withEndAction(()->{host.removeView(previous);changingPage=false;}).start();
+        } else changingPage=false;
     }
     private GradientDrawable bg(int color,int border) {
-        GradientDrawable out=new GradientDrawable();out.setColor(color);
-        out.setCornerRadius(d(16));out.setStroke(d(1),border);return out;
+        GradientDrawable out;
+        if(color==CARD)out=new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[]{0xff1d2c4c,0xff111829});
+        else if(color==CYAN)out=new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[]{0xff5ae4e8,0xff8eafff});
+        else{out=new GradientDrawable();out.setColor(color);}
+        out.setCornerRadius(d(22));out.setStroke(d(1),border);return out;
+    }
+    private GradientDrawable pageBackground(){
+        return new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[]{0xff0c142a,0xff101027,0xff06171f});
     }
     private TextView label(String text,int size,int color,boolean bold) {
         TextView v=new TextView(this);v.setText(text);v.setTextSize(size);v.setTextColor(color);
-        if(bold)v.setTypeface(android.graphics.Typeface.DEFAULT,android.graphics.Typeface.BOLD);
+        v.setTypeface(android.graphics.Typeface.create(bold?"sans-serif-medium":"sans-serif",
+            bold?android.graphics.Typeface.BOLD:android.graphics.Typeface.NORMAL));
         return v;
     }
     private LinearLayout col(){LinearLayout l=new LinearLayout(this);l.setOrientation(1);return l;}
@@ -120,22 +150,37 @@ public class MainActivity extends Activity {
     private void render(){
         if(document==null)return;
         building=true;currentFields.clear();currentKeys.clear();
-        ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setBackgroundColor(BACK);
+        ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setBackground(pageBackground());
         layout=col();layout.setPadding(d(18),d(16),d(18),d(24));sc.addView(layout);
         setContentView(sc);
         LinearLayout top=row();
-        TextView brand=label("🧠  CBT",27,GOLD,true);
+        TextView brand=label("◈  DIARIO CBT",23,GOLD,true);
         top.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
         Button settings=button("⚙",false);settings.setOnClickListener(v->{saveDraft();showSettings();});
         top.addView(settings);layout.addView(top);space(layout,14);
         String[] titles=I18n.headings(lang);
-        TextView heading=label(titles[step],24,FG,true);layout.addView(heading);
-        space(layout,8);
-        TextView progress=label((step+1)+"/7  ·  "+date+"  ·  "+
-           tr("Serie","Streak","Racha")+": "+streak()+" 🔥",13,SUB,false);layout.addView(progress);
-        space(layout,18);
-        LinearLayout card=col();card.setBackground(bg(CARD,0xff2c3654));
-        card.setPadding(d(15),d(18),d(15),d(18));layout.addView(card);
+        TextView kicker=label(tr("PERCORSO GUIDATO  •  "+(step+1)+" DI 7",
+          "GUIDED PATH  •  "+(step+1)+" OF 7",
+          "RUTA GUIADA  •  "+(step+1)+" DE 7"),11,CYAN,true);
+        layout.addView(kicker);space(layout,6);
+        TextView heading=label(titles[step],27,FG,true);layout.addView(heading);
+        space(layout,10);
+        TextView progress=label("◷ "+date+"    ◆ "+
+           tr("Serie","Streak","Racha")+": "+streak()+"  🔥",13,SUB,false);layout.addView(progress);
+        space(layout,14);
+        LinearLayout steps=row();steps.setGravity(Gravity.CENTER_VERTICAL);
+        for(int j=0;j<7;j++){
+            View block=new View(this);
+            GradientDrawable shape=new GradientDrawable();
+            shape.setCornerRadius(d(5));
+            shape.setColor(j<=step?CYAN:0xff364362);
+            block.setBackground(shape);
+            LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(0,d(5),1);
+            params.setMargins(d(2),0,d(2),0);steps.addView(block,params);
+        }
+        layout.addView(steps);space(layout,20);
+        LinearLayout card=col();card.setBackground(bg(CARD,0xff35466b));
+        card.setPadding(d(17),d(20),d(17),d(12));layout.addView(card);
         if(step<6){
             String[][] qs=I18n.questions(lang);
             for(int i=0;i<qs[step].length;i++) addQuestion(card,qs[step][i],"p"+step+"_"+i,i);
@@ -197,6 +242,10 @@ public class MainActivity extends Activity {
         rec.setOnClickListener(v->toggleRecord(key,rec));tools.addView(rec,new LinearLayout.LayoutParams(0,d(45),1));
         Button play=button("▶",false);play.setContentDescription(tr("Riascolta risposta","Replay recording","Reproducir grabación"));
         play.setOnClickListener(v->playRecording(key));tools.addView(play,new LinearLayout.LayoutParams(0,d(45),1));
+        Button readAnswer=button("🔉",false);
+        readAnswer.setContentDescription(tr("Ascolta la risposta","Read answer aloud","Escuchar respuesta"));
+        readAnswer.setOnClickListener(v->speak(answer.getText().toString()));
+        tools.addView(readAnswer,new LinearLayout.LayoutParams(0,d(45),1));
         card.addView(tools);space(card,18);
     }
     private void showFinal(LinearLayout panel) {
@@ -219,7 +268,10 @@ public class MainActivity extends Activity {
            "Completa il diario e premi «Concludi e analizza».",
            "Finish the journal and tap Complete and reflect.",
            "Termina el diario y pulsa Terminar y analizar."):report,16,FG,false);
-        panel.addView(observations);space(panel,15);
+        panel.addView(observations);space(panel,12);
+        Button hear=button("🔊 "+tr("Ascolta l'osservazione","Listen to reflection","Escuchar reflexión"),false);
+        hear.setOnClickListener(v->speak(observations.getText().toString()));panel.addView(hear);
+        space(panel,15);
         TextView note=label(tr("Non è una diagnosi o un giudizio clinico.",
             "Not a diagnosis or clinical judgement.","No es un diagnóstico ni un juicio clínico."),12,SUB,false);
         panel.addView(note);
@@ -418,17 +470,19 @@ public class MainActivity extends Activity {
         space(body,10);
         body.addView(label(tr("Modello IA locale","On-device AI model","Modelo IA local"),15,FG,true));
         TextView status=label(AiEngine.available(this)?
-           tr("Modello importato (compatibilità da verificare all'esecuzione).",
-           "Model imported (runtime compatibility unverified).",
-           "Modelo importado (compatibilidad por verificar)."):
-           tr("Modello non importato: funziona solo la riflessione guidata.",
-           "No model: guided reflection only.","Sin modelo: solo reflexión guiada."),13,SUB,false);
+           tr("Qwen3 0.6B installato e verificato. Inferenza locale.",
+           "Qwen3 0.6B installed and verified. On-device inference.",
+           "Qwen3 0.6B instalado y verificado. Inferencia local."):
+           tr("Qwen3 0.6B pronto al download automatico (Wi-Fi consigliato).",
+           "Qwen3 0.6B ready to download (Wi-Fi recommended).",
+           "Qwen3 0.6B listo para descargar (Wi-Fi recomendado)."),13,SUB,false);
         body.addView(status);
-        Button importButton=button(tr("Importa file .task","Import .task file","Importar archivo .task"),false);
-        importButton.setOnClickListener(v->{
-            Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");
-            i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,540);
-        });body.addView(importButton);space(body,12);
+        Button importButton=button(ModelManager.bundled(this)?
+           tr("Prepara IA già inclusa nell'APK","Prepare AI bundled in APK","Preparar IA incluida en APK"):
+           tr("Attiva IA Qwen3 integrata (~614 MB)","Activate built-in Qwen3 AI (~614 MB)",
+           "Activar IA Qwen3 integrada (~614 MB)"),false);
+        importButton.setOnClickListener(v->downloadBuiltInModel());
+        body.addView(importButton);space(body,12);
         Button save=button(tr("Salva impostazioni","Save settings","Guardar ajustes"),true);
         body.addView(save);
         AlertDialog dialog=new AlertDialog.Builder(this).setView(sc).create();
@@ -458,33 +512,64 @@ public class MainActivity extends Activity {
         });
         dialog.show();
     }
-    @Override protected void onActivityResult(int request,int result,Intent data){
-        super.onActivityResult(request,result,data);
-        if(request!=540||result!=RESULT_OK||data==null||data.getData()==null)return;
-        Uri uri=data.getData();
-        notifyUser(tr("Importazione modello in corso…","Importing model…","Importando modelo…"));
-        io.execute(()->{
-            Exception error=null;
-            File destination=AiEngine.modelFile(this),temp=new File(destination.getParentFile(),"model.tmp");
-            try(InputStream in=getContentResolver().openInputStream(uri);
-                OutputStream out=new BufferedOutputStream(new FileOutputStream(temp))){
-                if(in==null)throw new IOException("Missing stream");
-                byte[] buf=new byte[1024*128];int n;long length=0;
-                while((n=in.read(buf))!=-1){out.write(buf,0,n);length+=n;
-                  if(length>7L*1024*1024*1024)throw new IOException("Model exceeds 7GB");}
-                if(length<1024)throw new IOException("Model file too small");
-            }catch(Exception ex){error=ex;}
-            if(error==null){
-                try{java.nio.file.Files.move(temp.toPath(),destination.toPath(),
-                     java.nio.file.StandardCopyOption.REPLACE_EXISTING);}
-                catch(Exception ex){error=ex;}
+    private void offerBuiltInAI(){
+        if(isFinishing()||AiEngine.available(this))return;
+        if(ModelManager.bundled(this)){
+            downloadBuiltInModel();return;
+        }
+        android.content.SharedPreferences prefs=getSharedPreferences("options",0);
+        if(prefs.getBoolean("model_intro_seen",false))return;
+        prefs.edit().putBoolean("model_intro_seen",true).apply();
+        new AlertDialog.Builder(this)
+         .setTitle(tr("Qwen3, la tua IA privata","Qwen3, your private AI","Qwen3, tu IA privada"))
+         .setMessage(tr("La valutazione CBT e la frase motivazionale sono generate da Qwen3 0.6B sul telefono. Per iniziare, l'app scarica automaticamente 614 MB da Hugging Face. Wi-Fi consigliato. Nessun diario è inviato online. Vuoi attivarla?",
+            "CBT reflections and encouragement are generated on your phone by Qwen3 0.6B. The app needs to download 614 MB once from Hugging Face. Wi-Fi recommended. Your journal is never uploaded. Enable it now?",
+            "Qwen3 0.6B crea reflexiones y frases de ánimo en tu teléfono. Se descargarán 614 MB una sola vez desde Hugging Face. Wi-Fi recomendado. Tu diario nunca se envía. ¿Activarla ahora?"))
+         .setNegativeButton(tr("Più tardi","Later","Después"),(d,w)->{})
+         .setPositiveButton(tr("Attiva IA","Enable AI","Activar IA"),(d,w)->downloadBuiltInModel())
+         .show();
+    }
+    private void downloadBuiltInModel(){
+        if(AiEngine.available(this)){
+            notifyUser(tr("Qwen3 è già disponibile offline.","Qwen3 is already ready offline.",
+                "Qwen3 ya está listo sin conexión."));return;
+        }
+        final java.util.concurrent.atomic.AtomicBoolean cancel=new java.util.concurrent.atomic.AtomicBoolean(false);
+        final LinearLayout body=col();body.setPadding(d(24),d(22),d(24),d(18));
+        TextView title=label("◈  QWEN3 0.6B",20,CYAN,true);body.addView(title);space(body,16);
+        boolean bundled=ModelManager.bundled(this);
+        TextView detail=label(bundled?
+            tr("Preparazione dell'IA già inclusa nell'APK: verifica SHA-256. Non serve Internet.",
+            "Preparing the AI bundled in this APK: SHA-256 verification. No internet needed.",
+            "Preparando la IA incluida en el APK: verificación SHA-256, sin Internet."):
+            tr("Download sicuro dei pesi IA: 614 MB. Nessun dato del diario viene trasferito.",
+            "Downloading AI weights: 614 MB. No journal data is transferred.",
+            "Descargando IA: 614 MB. No se envía tu diario."),15,FG,false);body.addView(detail);space(body,16);
+        ProgressBar bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);bar.setProgress(0);body.addView(bar);
+        TextView percent=label("0%",14,SUB,false);body.addView(percent);
+        AlertDialog dialog=new AlertDialog.Builder(this).setView(body)
+            .setNegativeButton(tr("Interrompi","Cancel","Cancelar"),(dlg,which)->cancel.set(true))
+            .setCancelable(false).create();
+        dialog.show();
+        ModelManager.Listener listener=new ModelManager.Listener(){
+            @Override public void progress(long done,long total){
+                int value=(int)(done*100/total);
+                bar.setProgress(value);
+                percent.setText(value+"%   •   "+(done/1048576)+" / "+(total/1048576)+" MiB");
             }
-            if(error!=null)temp.delete();
-            Exception finalError=error;
-            runOnUiThread(()->notifyUser(finalError==null?
-              tr("Modello importato. Prova l'analisi per verificarlo.","Model imported. Test it with a reflection.",
-                "Modelo importado. Pruébalo con un análisis."):
-              tr("Importazione fallita: ","Import failed: ","Error al importar: ")+finalError.getMessage()));
-        });
+            @Override public void completed(Exception error){
+                if(!isFinishing())dialog.dismiss();
+                if(error!=null){
+                    notifyUser(tr("IA non installata: ","AI not installed: ","IA no instalada: ")+error.getMessage());
+                }else if(!isFinishing()){
+                    notifyUser(tr("IA pronta: Qwen3 funziona offline.","AI ready: Qwen3 works offline.",
+                        "IA lista: Qwen3 funciona sin conexión."));
+                    render();
+                }
+            }
+        };
+        if(bundled)ModelManager.installBundled(this,cancel,listener);
+        else ModelManager.download(this,cancel,listener);
     }
 }

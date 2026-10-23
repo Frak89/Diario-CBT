@@ -3,7 +3,6 @@ package com.frak89.diariocbt;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
-import com.google.mediapipe.tasks.genai.llminference.LlmInference;
 import java.io.File;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -11,26 +10,18 @@ import java.util.concurrent.Executors;
 public final class AiEngine {
     public interface Callback { void done(String response, Exception error); }
     private static final ExecutorService background=Executors.newSingleThreadExecutor();
-    public static File modelFile(Context ctx) { File d=new File(ctx.getFilesDir(),"models"); d.mkdirs(); return new File(d,"cbt-model.task"); }
-    public static boolean available(Context ctx) { return modelFile(ctx).isFile() && modelFile(ctx).length()>1024; }
+    public static File modelFile(Context ctx) { return ModelManager.file(ctx); }
+    public static boolean available(Context ctx) { return ModelManager.ready(ctx); }
     private static void generate(Context context, String prompt, Callback callback) {
         Context app=context.getApplicationContext();
         background.execute(() -> {
-            String text=null; Exception problem=null;
-            if(!available(app)) {
-                problem=new IllegalStateException("No compatible local LLM model imported");
-            } else {
-                try {
-                    LlmInference.LlmInferenceOptions opts=LlmInference.LlmInferenceOptions.builder()
-                        .setModelPath(modelFile(app).getAbsolutePath())
-                        .setMaxTokens(1536).build();
-                    try(LlmInference model=LlmInference.createFromOptions(app,opts)) {
-                        text=model.generateResponse(prompt);
-                    }
-                } catch(Exception ex) { problem=ex; }
-            }
-            String result=text; Exception error=problem;
-            new Handler(Looper.getMainLooper()).post(() -> callback.done(result,error));
+            String answer=null; Exception issue=null;
+            try {
+                if(!available(app)) throw new IllegalStateException("Qwen3 on-device model not ready");
+                answer=AiRuntime.generate(app,modelFile(app).getAbsolutePath(),prompt);
+            } catch(Throwable ex) {issue=ex instanceof Exception?(Exception)ex:new IllegalStateException(ex);}
+            String result=answer;Exception failure=issue;
+            new Handler(Looper.getMainLooper()).post(() -> callback.done(result,failure));
         });
     }
     public static void report(Context ctx, String language, String diagnosis, String goals, String diary, Callback cb) {
