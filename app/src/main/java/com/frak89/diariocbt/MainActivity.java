@@ -622,62 +622,94 @@ public class MainActivity extends Activity {
         return t+"\n\n"+a+"\n\n"+next;
     }
     /** Explicit end-of-session action. Do not relaunch AI or pretend a failed encrypted write worked. */
+    /** Archives one complete session, resets the editable fields, and preserves all past dates. */
     private void finishAndRegisterJournal(){
-        if(recorder!=null){
-            stopRecording();
-        }
-        if(transcriptRunning || completingSession
-             || "generating".equals(session().optString("reportStatus",""))){
+        if(recorder!=null)stopRecording();
+        if(transcriptRunning||completingSession
+          ||"generating".equals(session().optString("reportStatus",""))){
             new AlertDialog.Builder(this)
-                .setTitle(tr("Elaborazione in corso","Processing in progress",
-                    "Procesamiento en curso"))
+                .setTitle(tr("Elaborazione in corso","Processing in progress","Procesamiento en curso"))
                 .setMessage(tr(
-                    "La trascrizione o l'osservazione IA sta terminando. Potrai registrare definitivamente il diario appena conclusa, senza perdere il risultato.",
-                    "Transcription or AI reflection is still processing. Finish and save once it has completed so the result is retained.",
-                    "La transcripción o la observación IA sigue procesándose. Guarda el diario cuando termine para conservar el resultado."))
+                    "La trascrizione o l'analisi è ancora in corso. Puoi salvare definitivamente non appena termina.",
+                    "Transcription or analysis is still in progress. You can archive the result when it finishes.",
+                    "La transcripción o el análisis sigue en curso. Guarda el resultado cuando termine."))
                 .setPositiveButton("OK",null).show();
             return;
         }
-        saveDraft();
-        markDayCompleted();
-        JSONObject current=session();
-        if(!current.optBoolean("diaryRegistered",false)){
-            set(current,"diaryRegistered",true);
-            set(current,"registeredAt",java.time.Instant.now().toString());
+        saveDraft();markDayCompleted();
+        JSONObject previousDocument;
+        try{previousDocument=new JSONObject(document.toString());}
+        catch(Exception error){
+            notifyUser(tr("Impossibile preparare l'archivio.","Could not prepare archive.",
+                "No se pudo preparar el archivo."));
+            return;
         }
-        set(current,"completionScore",score());
-        set(current,"completionStreak",streak());
+        int savedScore=score(),savedStreak=streak();
+        java.util.ArrayList<File> sourceAudio=new java.util.ArrayList<>();
+        java.util.ArrayList<File> archivedAudio=new java.util.ArrayList<>();
         try{
-            // Verify the encrypted journal is actually written before saying it is saved.
+            JSONObject current=session();
+            JSONObject snapshot=new JSONObject(current.toString());
+            String recordId=java.util.UUID.randomUUID().toString();
+            set(snapshot,"archiveId",recordId);
+            set(snapshot,"recordedAt",java.time.Instant.now().toString());
+            set(snapshot,"completedOn",date);
+            set(snapshot,"completionScore",savedScore);
+            set(snapshot,"completionStreak",savedStreak);
+            set(snapshot,"diaryRegistered",true);
+            JSONObject audioMap=new JSONObject();
+            File archiveFolder=new File(getFilesDir(),"audio_archive");
+            if(!archiveFolder.exists()&&!archiveFolder.mkdirs())
+                throw new java.io.IOException("Could not create audio archive directory");
+            for(int page=0;page<6;page++)for(int index=0;index<3;index++){
+                if(page==1||(page==4&&index==2))continue;
+                String key="p"+page+"_"+index;
+                File source=audioFile(key);
+                if(!source.isFile()||source.length()==0)continue;
+                String fileName=recordId+"_"+key+".m4a";
+                File target=new File(archiveFolder,fileName);
+                java.nio.file.Files.copy(source.toPath(),target.toPath());
+                sourceAudio.add(source);archivedAudio.add(target);
+                set(audioMap,key,fileName);
+            }
+            set(snapshot,"archivedAudio",audioMap);
+            JSONObject archive=document.optJSONObject("archive");
+            if(archive==null){archive=new JSONObject();set(document,"archive",archive);}
+            org.json.JSONArray dayItems=archive.optJSONArray(date);
+            if(dayItems==null){dayItems=new org.json.JSONArray();set(archive,date,dayItems);}
+            dayItems.put(snapshot);
+            JSONObject sessions=document.optJSONObject("sessions");
+            if(sessions==null){sessions=new JSONObject();set(document,"sessions",sessions);}
+            // Reset only the active form; archived diary, history, streak and settings survive.
+            set(sessions,date,new JSONObject());
             SecureStore.write(this,document);
         }catch(Exception error){
-            set(current,"diaryRegistered",false);
+            document=previousDocument;
+            for(File copied:archivedAudio)copied.delete();
             new AlertDialog.Builder(this)
-                .setTitle(tr("Salvataggio non riuscito","Save unsuccessful",
-                    "No se pudo guardar"))
-                .setMessage(tr(
-                    "Il diario non è stato confermato nell'archivio cifrato. Resta aperto, così puoi riprovare senza perdere le risposte.",
-                    "The encrypted journal write was not confirmed. The app will stay open so you can retry without losing your answers.",
-                    "No se confirmó el guardado cifrado. El diario queda abierto para volver a intentarlo.")+
-                    "\n\n"+error.getMessage())
+                .setTitle(tr("Archivio non salvato","Archive not saved","Archivo no guardado"))
+                .setMessage(tr("I dati originali sono rimasti nel diario. Riprova senza cancellare l'app.",
+                    "The original journal remains intact. Retry without clearing app data.",
+                    "El diario original sigue intacto. Inténtalo de nuevo sin borrar la app.")+
+                    "\n"+error.getMessage())
                 .setPositiveButton("OK",null).show();
             return;
         }
+        for(File source:sourceAudio)source.delete();
+        // Exit the CBT evaluation and present clean inputs, without losing the archive.
+        step=0;summaryVisible=false;calendarVisible=false;archivedDay=null;
+        currentFields.clear();currentKeys.clear();
+        render();
         new AlertDialog.Builder(this)
-            .setTitle("✓ "+tr("Diario registrato","Journal saved","Diario guardado"))
+            .setTitle("✓ "+tr("Diario registrato","Journal archived","Diario archivado"))
             .setMessage(tr(
-                "La giornata è salvata nell'archivio cifrato. Punteggio CBT: ",
-                "Today's journal is encrypted and saved. CBT score: ",
-                "El diario de hoy está cifrado y guardado. Puntuación CBT: ")
-                +score()+"/10\n"+
-                tr("Giorni consecutivi: ","Consecutive days: ","Días consecutivos: ")+streak()+" 🔥\n\n"+
-                tr("Potrai riaprire il diario di oggi senza ripetere l'analisi IA.",
-                   "You can reopen today's entry without running AI analysis again.",
-                   "Podrás reabrir el diario de hoy sin ejecutar de nuevo el análisis IA."))
-            .setNegativeButton(tr("Resta nel riepilogo","Stay in summary",
-                "Quedar en el resumen"),(dialog,which)->render())
-            .setPositiveButton(tr("Chiudi diario","Close journal",
-                "Cerrar diario"),(dialog,which)->finish())
+                "La registrazione è conservata nello storico del calendario. I campi sono stati azzerati per una nuova compilazione. Punteggio: ",
+                "Your journal is safely archived in the calendar. The fields are clear for a new entry. Score: ",
+                "Tu diario está archivado en el calendario. Los campos están vacíos para una nueva entrada. Puntuación: ")
+                +savedScore+"/10  •  🔥 "+savedStreak)
+            .setNegativeButton(tr("Nuova compilazione","New entry","Nueva entrada"),null)
+            .setPositiveButton("📅 "+tr("Apri calendario","Open calendar","Abrir calendario"),
+                (dialog,which)->openCalendar())
             .show();
     }
     private boolean hasDiaryContent(JSONObject value){
