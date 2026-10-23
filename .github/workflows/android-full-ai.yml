@@ -1,0 +1,39 @@
+name: Android FULL AI offline APK
+on:
+  push:
+    branches: [main, feature/modern-ui-integrated-qwen3]
+  workflow_dispatch:
+jobs:
+  full_ai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+      - run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Download pinned open-licensed Qwen3 0.6B weights
+        run: |
+          mkdir -p app/src/main/assets
+          curl --fail --location --retry 4 --retry-all-errors --retry-delay 8 --connect-timeout 30 \
+            "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm" \
+            --output "app/src/main/assets/Qwen3-0.6B.litertlm"
+          echo "c5f39b4191926786c3e6668b62af4d6eb15248dfc7a5348252a9b406f33f2108  app/src/main/assets/Qwen3-0.6B.litertlm" | sha256sum --check
+      - name: Build APK with embedded Qwen3 weights
+        run: gradle --no-daemon :app:assembleRelease
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Diario-CBT-v0.2-FULL-AI-OFFLINE
+          path: app/build/outputs/apk/release/*.apk
+          compression-level: 0
+          if-no-files-found: error
