@@ -28,6 +28,7 @@ public class MainActivity extends Activity {
       CYAN=0xff62e8ec, GOLD=0xffffc347, PURPLE=0xffaa85fa;
     private boolean changingPage=false;
     private boolean completingSession=false;
+    private boolean summaryVisible=false;
     private boolean transcriptRunning=false;
     private boolean finishAfterTranscript=false;
     private ScrollView activeScroll;
@@ -62,7 +63,13 @@ public class MainActivity extends Activity {
              .setPositiveButton("Chiudi",(dialog,which)->finish()).setCancelable(false).show();
             return;
         }
-        if(state!=null) step=state.getInt("step",0);
+        if(state!=null){
+            step=state.getInt("step",0);
+            summaryVisible=state.getBoolean("summaryVisible",false);
+        } else {
+            JSONObject records=document.optJSONObject("history");
+            summaryVisible=records!=null&&records.has(date);
+        }
         JSONObject unfinished=session();
         if("generating".equals(unfinished.optString("reportStatus",""))){
             set(unfinished,"reportStatus","interrupted");
@@ -75,7 +82,12 @@ public class MainActivity extends Activity {
         render();
         new Handler(Looper.getMainLooper()).postDelayed(this::offerBuiltInAI,700);
     }
-    @Override protected void onSaveInstanceState(Bundle state){saveDraft();state.putInt("step",step);super.onSaveInstanceState(state);}
+    @Override protected void onSaveInstanceState(Bundle state){
+        saveDraft();
+        state.putInt("step",step);
+        state.putBoolean("summaryVisible",summaryVisible);
+        super.onSaveInstanceState(state);
+    }
     @Override protected void onPause(){saveDraft();super.onPause();}
     @Override protected void onDestroy(){
         if(tts!=null){tts.stop();tts.shutdown();}
@@ -165,6 +177,10 @@ public class MainActivity extends Activity {
     }
     private void render(){
         if(document==null)return;
+        if(summaryVisible){
+            renderSummary();
+            return;
+        }
         building=true;currentFields.clear();currentKeys.clear();
         ScrollView sc=new ScrollView(this);
         sc.setFillViewport(true);sc.setSmoothScrollingEnabled(true);
@@ -213,7 +229,7 @@ public class MainActivity extends Activity {
             prev.setOnClickListener(v->navigate(step-1));
         }
         if(step>0) foot.addView(new View(this),new LinearLayout.LayoutParams(d(10),1));
-        Button next=button(step==6?tr("Termina","Done","Terminar"):tr("Avanti →","Next →","Siguiente →"),true);
+        Button next=button(step==6?tr("Termina e mostra riepilogo","Finish & view summary","Terminar y ver resumen"):tr("Avanti →","Next →","Siguiente →"),true);
         foot.addView(next,new LinearLayout.LayoutParams(0,d(52),1));
         next.setOnClickListener(v->{if(step<6)navigate(step+1);else finishSession();});
         layout.addView(foot);
@@ -325,6 +341,122 @@ public class MainActivity extends Activity {
         }
         space(card,10);
     }
+    private String practicalEncouragement(JSONObject entry){
+        String achieved=entry.optString("p0_2","").trim();
+        String next=entry.optString("p5_0","").trim();
+        if(!next.isEmpty()){
+            String mini=next.length()>125?next.substring(0,125).trim()+"…":next;
+            return tr("Un progresso alla volta è sufficiente per oggi. Puoi iniziare con due minuti di: ",
+                "One step at a time is enough for today. Begin with two minutes of: ",
+                "Un paso a la vez es suficiente por hoy. Empieza con dos minutos de: ")+mini;
+        }
+        if(!achieved.isEmpty()){
+            String brief=achieved.length()>110?achieved.substring(0,110).trim()+"…":achieved;
+            return tr("Hai già individuato qualcosa che sei riuscito a fare: ",
+                "You already identified something you managed to do: ",
+                "Ya identificaste algo que lograste hacer: ")+brief+
+                tr(". Puoi riconoscere quel passo senza dover risolvere tutto oggi.",
+                    ". That step counts, even without solving everything today.",
+                    ". Ese paso cuenta sin tener que resolverlo todo hoy.");
+        }
+        return tr("Scegli una sola azione fattibile in due minuti. Cominciare in piccolo può aiutare più che aspettare il momento perfetto.",
+            "Choose one doable two-minute action. Starting small can be more useful than waiting for a perfect moment.",
+            "Elige una acción posible de dos minutos. Empezar poco a poco puede ayudar más que esperar el momento perfecto.");
+    }
+    private void renderSummary(){
+        building=true;currentFields.clear();currentKeys.clear();
+        ScrollView scroll=new ScrollView(this);
+        scroll.setFillViewport(true);scroll.setBackground(pageBackground());
+        activeScroll=scroll;
+        LinearLayout content=col();content.setPadding(d(18),d(28),d(18),d(40));
+        scroll.addView(content);setContentView(scroll);
+        TextView title=label(tr("IL TUO RIEPILOGO","YOUR SUMMARY","TU RESUMEN"),13,CYAN,true);
+        content.addView(title);space(content,10);
+        content.addView(label(tr("Un passo alla volta","One step at a time","Paso a paso"),29,FG,true));
+        space(content,6);
+        content.addView(label(date,14,SUB,false));space(content,24);
+
+        JSONObject entry=session();
+        LinearLayout stats=row();
+        LinearLayout scoreCard=col();scoreCard.setPadding(d(16),d(17),d(12),d(15));
+        scoreCard.setBackground(bg(CARD,0xff374568));
+        scoreCard.addView(label(tr("PUNTEGGIO CBT","CBT SCORE","PUNTUACIÓN CBT"),12,SUB,true));
+        scoreCard.addView(label(entry.optInt("completionScore",score())+" / 10",29,GOLD,true));
+        stats.addView(scoreCard,new LinearLayout.LayoutParams(0,-2,1));
+        stats.addView(new View(this),new LinearLayout.LayoutParams(d(8),1));
+        LinearLayout streakCard=col();streakCard.setPadding(d(16),d(17),d(12),d(15));
+        streakCard.setBackground(bg(CARD,0xff374568));
+        streakCard.addView(label(tr("GIORNI DI SEGUITO","DAY STREAK","DÍAS SEGUIDOS"),12,SUB,true));
+        streakCard.addView(label("🔥 "+entry.optInt("completionStreak",streak()),29,GOLD,true));
+        stats.addView(streakCard,new LinearLayout.LayoutParams(0,-2,1));
+        content.addView(stats);space(content,10);
+        content.addView(label(tr("Il punteggio misura gli esercizi CBT compilati, non la salute mentale o il valore della persona.",
+            "This score reflects CBT exercises completed, not mental health or personal worth.",
+            "La puntuación refleja ejercicios CBT completados, no la salud mental ni el valor personal."),
+            12,SUB,false));space(content,20);
+
+        LinearLayout encouragement=col();encouragement.setBackground(bg(CARD,0xff374568));
+        encouragement.setPadding(d(17),d(18),d(17),d(18));
+        encouragement.addView(label(tr("🌱 UN INCORAGGIAMENTO UTILE",
+            "🌱 A PRACTICAL ENCOURAGEMENT",
+            "🌱 UN ÁNIMO ÚTIL"),16,CYAN,true));space(encouragement,9);
+        String message=entry.optString("encouragement","").trim();
+        if(message.isEmpty())message=practicalEncouragement(entry);
+        final String spokenEncouragement=message;
+        encouragement.addView(label(SpeechText.clean(message),16,FG,false));
+        space(encouragement,12);
+        Button hearEncouragement=button("🔊 "+tr("Ascolta incoraggiamento","Listen","Escuchar"),false);
+        hearEncouragement.setOnClickListener(v->speak(spokenEncouragement));
+        encouragement.addView(hearEncouragement);
+        content.addView(encouragement);space(content,19);
+
+        LinearLayout verdict=col();verdict.setPadding(d(17),d(20),d(17),d(17));
+        verdict.setBackground(bg(CARD,0xff374568));
+        verdict.addView(label(tr("OSSERVAZIONE FINALE","FINAL REFLECTION",
+            "OBSERVACIÓN FINAL"),18,FG,true));space(verdict,12);
+        String status=entry.optString("reportStatus","");
+        String report=entry.optString("report","");
+        String provider=entry.optString("aiProvider","local");
+        if("generating".equals(status)){
+            ProgressBar spinner=new ProgressBar(this);verdict.addView(spinner);
+            verdict.addView(label(tr("L'IA sta preparando la tua osservazione.",
+                "AI is preparing your reflection.","La IA está preparando tu observación."),15,SUB,false));
+        }else{
+            if(entry.optBoolean("aiReport",false)){
+                verdict.addView(label("groq".equals(provider)?"Groq GPT-OSS 120B":"Qwen3 offline",12,CYAN,true));
+                space(verdict,7);
+            }
+            if(!"done".equals(status)){
+                String reason=entry.optString("aiError","");
+                if(!reason.isEmpty()){
+                    verdict.addView(label(tr("IA non disponibile: ","AI unavailable: ",
+                        "IA no disponible: ")+reason,13,0xffffbd9b,false));
+                    space(verdict,9);
+                }
+            }
+            verdict.addView(label(report.isEmpty()?fallback():report,16,FG,false));
+            space(verdict,13);
+            Button hear=button("🔊 "+tr("Ascolta il verdetto","Listen to reflection","Escuchar observación"),false);
+            final String narration=report.isEmpty()?fallback():report;
+            hear.setOnClickListener(v->speak(narration));
+            verdict.addView(hear);
+            space(verdict,11);
+            Button regenerate=button(tr("↻ Rigenera analisi IA","↻ Regenerate AI reflection",
+                "↻ Regenerar observación IA"),false);
+            regenerate.setOnClickListener(v->regenerateWithConfirmation());
+            verdict.addView(regenerate);
+        }
+        content.addView(verdict);space(content,20);
+        Button review=button("← "+tr("Rivedi o modifica il diario",
+            "Review or edit your journal","Revisar o editar el diario"),true);
+        review.setOnClickListener(v->{summaryVisible=false;step=0;render();});
+        content.addView(review,new LinearLayout.LayoutParams(-1,d(57)));
+        space(content,12);
+        content.addView(label(tr("Riepilogo e progressi sono salvati per la giornata.",
+            "Summary and progress are saved for today.",
+            "El resumen y el progreso están guardados para hoy."),12,SUB,false));
+        building=false;
+    }
     private void showFinal(LinearLayout panel) {
         JSONObject entry=session();
         TextView score=label(tr("Esercizi CBT completati","Completed CBT exercises","Ejercicios CBT completados")
@@ -378,7 +510,7 @@ public class MainActivity extends Activity {
                    tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
                    tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
                 retry.setOnClickListener(v->{
-                    if(AiEngine.reportAvailable(this))completeAndAnalyze();
+                    if(AiEngine.reportAvailable(this))regenerateWithConfirmation();
                     else downloadBuiltInModel();
                 });panel.addView(retry);space(panel,12);
             }
@@ -425,18 +557,51 @@ public class MainActivity extends Activity {
              "NEXT STEPS: Try this concrete action: ","PRÓXIMOS PASOS: Prueba esta acción concreta: ")+action;
         return t+"\n\n"+a+"\n\n"+next;
     }
+    private void markDayCompleted(){
+        JSONObject entry=session();
+        JSONObject history=document.optJSONObject("history");
+        if(history==null){history=new JSONObject();set(document,"history",history);}
+        if(!history.has(date))set(history,date,true);
+        if(!entry.has("completedOn"))set(entry,"completedOn",date);
+        if(!entry.has("completionScore"))set(entry,"completionScore",score());
+        if(!entry.has("completionStreak"))set(entry,"completionStreak",streak());
+        persist();
+    }
     private void finishSession(){
-        if(completingSession)return;
         if(recorder!=null)stopRecording();
+        if(completingSession)return;
         saveDraft();
         if(transcriptRunning){
             finishAfterTranscript=true;
-            notifyUser(tr("Attendo la trascrizione, poi preparo l'osservazione.",
-              "Waiting for transcription before generating the reflection.",
-              "Esperando la transcripción para generar la observación."));
+            notifyUser(tr("Attendo la trascrizione, poi apro il riepilogo.",
+                "Waiting for transcription, then opening your summary.",
+                "Espero la transcripción antes de abrir el resumen."));
+            return;
+        }
+        markDayCompleted();
+        summaryVisible=true;
+        String status=session().optString("reportStatus","");
+        if("done".equals(status)||"generating".equals(status)
+            ||"error".equals(status)||"missing".equals(status)
+            ||"interrupted".equals(status)){
+            render();
             return;
         }
         completeAndAnalyze();
+    }
+    private void regenerateWithConfirmation(){
+        if(completingSession)return;
+        new AlertDialog.Builder(this)
+            .setTitle(tr("Rigenerare l'osservazione IA?",
+                "Regenerate AI reflection?","¿Regenerar la observación IA?"))
+            .setMessage(tr(
+                "Sostituirà l'osservazione salvata con una nuova analisi. Il punteggio e lo streak non cambieranno.",
+                "This will replace the saved reflection. Your score and streak will not change.",
+                "Sustituirá la observación guardada. Tu puntuación y racha no cambiarán."))
+            .setNegativeButton(tr("Annulla","Cancel","Cancelar"),null)
+            .setPositiveButton(tr("Rigenera","Regenerate","Regenerar"),
+                (dialog,which)->completeAndAnalyze())
+            .show();
     }
     private void appendTranscript(String key,String transcript,EditText field){
         if(transcript==null||transcript.trim().isEmpty())return;
@@ -460,9 +625,7 @@ public class MainActivity extends Activity {
     private void completeAndAnalyze(){
         if(completingSession)return;
         saveDraft();
-        JSONObject history=document.optJSONObject("history");
-        if(history==null){history=new JSONObject();set(document,"history",history);}
-        set(history,date,true);
+        markDayCompleted();
         JSONObject entry=session();
         if(!AiEngine.reportAvailable(this)){
             set(entry,"reportStatus","missing");
@@ -495,7 +658,7 @@ public class MainActivity extends Activity {
                 "La generación tarda demasiado en este dispositivo. Prueba la IA desde Ajustes."));
             set(inProgress,"report",fallback());
             set(inProgress,"aiReport",false);
-            persist();if(step==6)render();
+            persist();if(summaryVisible||step==6)render();
         },180000);
         AiEngine.report(this,lang,diagnosis,goals,diary,(response,error)->{
             if(!"generating".equals(entry.optString("reportStatus","")))return;
@@ -519,15 +682,18 @@ public class MainActivity extends Activity {
                 set(target,"aiReport",true);
                 set(target,"aiError","");
             }
-            persist();if(step==6)render();
+            persist();if(summaryVisible||step==6)render();
             if(!target.optBoolean("aiReport",false))return;
-            AiEngine.encouragement(this,lang,diagnosis,goals,(phrase,pError)->{
+            AiEngine.encouragement(this,lang,diagnosis,goals,diary,(phrase,pError)->{
                 if(isFinishing())return;
                 if(pError==null&&phrase!=null&&!phrase.trim().isEmpty()&&phrase.length()<240){
                     String message=phrase.replaceAll("(?s)<think>.*?</think>","").trim();
                     if(!message.isEmpty()){
+                        set(target,"encouragement",message);
                         set(document,"splashPhrase",message);
-                        set(document,"splashDiagnosis",diagnosis);persist();
+                        set(document,"splashDiagnosis",diagnosis);
+                        persist();
+                        if(summaryVisible)render();
                     }
                 }
             });
@@ -544,8 +710,15 @@ public class MainActivity extends Activity {
         }
     }
     private void speak(String text){
-        if(tts==null)return;configureVoice();
-        tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,"question");
+        if(tts==null)return;
+        configureVoice();
+        java.util.List<String> paragraphs=SpeechText.chunks(text,1500);
+        int index=0;
+        for(String item:paragraphs){
+            if(item.isEmpty())continue;
+            tts.speak(item,index==0?TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD,
+                null,"cbt-"+System.nanoTime()+"-"+(index++));
+        }
     }
     private boolean micPermission(){
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)return true;
@@ -764,7 +937,7 @@ public class MainActivity extends Activity {
             }
             if(finishAfterTranscript){
                 finishAfterTranscript=false;
-                completeAndAnalyze();
+                finishSession();
             }
         });
     }

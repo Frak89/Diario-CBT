@@ -6,8 +6,8 @@ android {
         applicationId 'com.frak89.diariocbt'
         minSdk 28
         targetSdk 36
-        versionCode 9
-        versionName '0.2.7'
+        versionCode 10
+        versionName '0.2.8'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -26,4 +26,5 @@ android {
 dependencies {
     implementation 'com.google.ai.edge.litertlm:litertlm-android:0.18.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+    testImplementation 'junit:junit:4.13.2'
 }
