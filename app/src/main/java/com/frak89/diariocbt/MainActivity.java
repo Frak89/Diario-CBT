@@ -844,41 +844,85 @@ public class MainActivity extends Activity {
         EditText goals=new EditText(this);goals.setTextColor(FG);
         goals.setText(document.optString("goals",""));body.addView(goals);space(body,14);
         android.content.SharedPreferences p=getSharedPreferences("options",0);
-        body.addView(label(tr("TRASCRIZIONE ONLINE (facoltativa)",
-            "ONLINE TRANSCRIPTION (optional)",
-            "TRANSCRIPCIÓN ONLINE (opcional)"),15,CYAN,true));
-        space(body,6);
-        body.addView(label(tr(
-           "Per trascrivere i file M4A useremo OpenAI Speech-to-Text (gpt-4o-mini-transcribe). È un servizio API separato da ChatGPT, potenzialmente a pagamento. Solo l'audio di una registrazione viene inviato quando lo autorizzi; il diario e la diagnosi non vengono inviati.",
-           "Recorded M4A files can be transcribed via OpenAI Speech-to-Text (gpt-4o-mini-transcribe). This is a separate potentially paid API service, not included in ChatGPT. Only recordings you authorize are sent; your journal and diagnosis are not uploaded.",
-           "Los audios M4A pueden transcribirse con OpenAI Speech-to-Text (gpt-4o-mini-transcribe). Es un servicio API separado y posiblemente de pago. Solo se envían grabaciones autorizadas, no el diario ni el diagnóstico."),13,SUB,false));
+        body.addView(label(tr("TRASCRIZIONE AUDIO ONLINE",
+          "ONLINE AUDIO TRANSCRIPTION","TRANSCRIPCIÓN DE AUDIO ONLINE"),15,CYAN,true));
         space(body,7);
+        body.addView(label(tr(
+            "Groq Whisper Large V3 ha un piano gratuito con limiti giornalieri: non richiede credito OpenAI. Richiede una chiave Groq gratuita. In alternativa resta OpenAI con fatturazione API.",
+            "Groq Whisper Large V3 has a daily-limited free tier. A free Groq API key is required; OpenAI paid API remains available.",
+            "Groq Whisper Large V3 tiene un plan gratuito con límites diarios y requiere una clave Groq. OpenAI de pago sigue disponible."),13,SUB,false));
+        space(body,7);
+        Spinner sttService=new Spinner(this);
+        sttService.setAdapter(new ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item,new String[]{
+              "Groq Whisper V3 — Free Tier","OpenAI Speech-to-Text — Paid API"}));
+        String selectedProvider=p.getString("stt_provider","groq");
+        sttService.setSelection("openai".equals(selectedProvider)?1:0);
+        body.addView(sttService);space(body,9);
+        Button groqWebsite=button(tr("Crea chiave gratuita su Groq",
+          "Get a free Groq API key","Obtener clave Groq gratuita"),false);
+        groqWebsite.setOnClickListener(v->startActivity(new Intent(Intent.ACTION_VIEW,
+            Uri.parse("https://console.groq.com/keys"))));
+        body.addView(groqWebsite);space(body,8);
+        EditText groqKey=new EditText(this);
+        groqKey.setTextColor(FG);groqKey.setHintTextColor(SUB);
+        groqKey.setSingleLine(true);
+        groqKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT|
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        groqKey.setHint(document.optString("groqApiKey","").isEmpty()?
+          "Groq API key (gsk_…)":
+          tr("Chiave Groq già cifrata — vuoto per conservarla",
+              "Groq key encrypted — leave blank to keep",
+              "Clave Groq cifrada — dejar en blanco para conservar"));
+        body.addView(groqKey);
+        CheckBox removeGroq=new CheckBox(this);removeGroq.setTextColor(FG);
+        removeGroq.setText(tr("Elimina chiave Groq","Delete Groq key","Eliminar clave Groq"));
+        body.addView(removeGroq);space(body,6);
         EditText cloudKey=new EditText(this);
-        cloudKey.setTextColor(FG);cloudKey.setHintTextColor(SUB);
-        cloudKey.setSingleLine(true);
-        cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT
-            |android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        cloudKey.setTextColor(FG);cloudKey.setHintTextColor(SUB);cloudKey.setSingleLine(true);
+        cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT|
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
         cloudKey.setHint(document.optString("cloudSttApiKey","").isEmpty()?
-            tr("Inserisci chiave API personale (sk-...)",
-              "Enter your personal API key (sk-...)",
-              "Introduce tu clave API personal (sk-...)"):
-            tr("Chiave salvata e cifrata — lascia vuoto per conservarla",
-              "Encrypted key saved — leave blank to keep it",
-              "Clave cifrada guardada — dejar vacío para conservar"));
-        body.addView(cloudKey);space(body,3);
-        CheckBox removeKey=new CheckBox(this);
-        removeKey.setTextColor(FG);
-        removeKey.setText(tr("Elimina la chiave memorizzata",
-           "Delete stored API key","Eliminar clave API guardada"));
-        body.addView(removeKey);
-        CheckBox speechConsent=new CheckBox(this);
-        speechConsent.setTextColor(FG);
+          tr("Chiave OpenAI alternativa (sk-…)", "Alternative OpenAI key (sk-…)",
+            "Clave OpenAI alternativa (sk-…)"):
+          tr("Chiave OpenAI cifrata — vuoto per conservarla",
+            "OpenAI key encrypted — leave blank to keep",
+            "Clave OpenAI cifrada — dejar vacío para conservar"));
+        body.addView(cloudKey);
+        CheckBox removeKey=new CheckBox(this);removeKey.setTextColor(FG);
+        removeKey.setText(tr("Elimina chiave OpenAI","Delete OpenAI key","Eliminar clave OpenAI"));
+        body.addView(removeKey);space(body,7);
+        CheckBox speechConsent=new CheckBox(this);speechConsent.setTextColor(FG);
         speechConsent.setText(tr(
-           "Autorizzo l'invio delle registrazioni audio al servizio OpenAI per la trascrizione",
-           "I allow recorded audio to be sent to OpenAI for transcription",
-           "Autorizo enviar las grabaciones a OpenAI para transcribirlas"));
-        speechConsent.setChecked(p.getBoolean("cloud_stt_consent",false));
-        body.addView(speechConsent);space(body,12);
+          "Autorizzo a inviare il file audio al servizio di trascrizione selezionato",
+          "I consent to send my recording to the selected transcription service",
+          "Autorizo enviar mi audio al servicio de transcripción seleccionado"));
+        speechConsent.setChecked(p.getBoolean("cloud_stt_consent",false)
+            && selectedProvider.equals(p.getString("stt_consent_provider","")));
+        sttService.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+            public void onItemSelected(android.widget.AdapterView<?> parent,View view,int pos,long id){
+                String provider=pos==0?"groq":"openai";
+                speechConsent.setChecked(p.getBoolean("cloud_stt_consent",false)
+                  && provider.equals(p.getString("stt_consent_provider","")));
+            }
+            public void onNothingSelected(android.widget.AdapterView<?> parent){}
+        });
+        body.addView(speechConsent);space(body,11);
+        body.addView(label(tr("OSSERVAZIONE IA ONLINE (FACOLTATIVA)",
+              "ONLINE AI REFLECTION (OPTIONAL)",
+              "OBSERVACIÓN IA ONLINE (OPCIONAL)"),15,CYAN,true));
+        space(body,5);
+        body.addView(label(tr(
+          "Groq GPT-OSS 120B può generare l'osservazione finale anche senza Qwen3 locale. Attivandolo, ogni volta che premi Termina vengono inviati a Groq i testi del diario, gli obiettivi e la diagnosi eventualmente dichiarata. Puoi lasciarlo disattivato e usare solo Qwen3 offline.",
+          "Groq GPT-OSS 120B can produce the final reflection without Qwen3 locally. Enabling this sends your diary text, goals and any declared diagnosis to Groq whenever you complete a session. Leave it off to use local Qwen3.",
+          "Groq GPT-OSS 120B puede generar la reflexión sin Qwen3 local. Al activarlo se envían a Groq el diario, objetivos y cualquier diagnóstico declarado al terminar. Desactívalo para usar Qwen3 local."),13,SUB,false));
+        CheckBox onlineAiConsent=new CheckBox(this);onlineAiConsent.setTextColor(FG);
+        onlineAiConsent.setText(tr(
+          "Autorizzo l'invio dei contenuti CBT e della diagnosi dichiarata a Groq per l'IA online",
+          "I consent to sending CBT journal content and declared diagnosis to Groq for online AI",
+          "Autorizo enviar el diario CBT y diagnóstico declarado a Groq para IA online"));
+        onlineAiConsent.setChecked(p.getBoolean("groq_ai_consent",false));
+        body.addView(onlineAiConsent);space(body,12);
         CheckBox reminder=new CheckBox(this);reminder.setTextColor(FG);
         reminder.setText(tr("Promemoria giornaliero","Daily reminder","Recordatorio diario"));
         reminder.setChecked(p.getBoolean("enabled",false));body.addView(reminder);
@@ -943,11 +987,18 @@ public class MainActivity extends Activity {
             String typedKey=cloudKey.getText().toString().trim();
             if(removeKey.isChecked())set(document,"cloudSttApiKey","");
             else if(!typedKey.isEmpty())set(document,"cloudSttApiKey",typedKey);
+            String enteredGroq=groqKey.getText().toString().trim();
+            if(removeGroq.isChecked())set(document,"groqApiKey","");
+            else if(!enteredGroq.isEmpty())set(document,"groqApiKey",enteredGroq);
             if(!newDiag.equals(oldDiag)){set(document,"splashPhrase","");set(document,"splashDiagnosis","");}
             persist();
             String l=languages.getSelectedItemPosition()==1?"en":languages.getSelectedItemPosition()==2?"es":"it";
             p.edit().putString("lang",l).putBoolean("enabled",reminder.isChecked())
+                .putString("stt_provider",sttService.getSelectedItemPosition()==0?"groq":"openai")
+                .putString("stt_consent_provider",speechConsent.isChecked()?
+                    (sttService.getSelectedItemPosition()==0?"groq":"openai"):"")
                 .putBoolean("cloud_stt_consent",speechConsent.isChecked())
+                .putBoolean("groq_ai_consent",onlineAiConsent.isChecked())
                 .putBoolean("fullscreen",fullscreen.isChecked())
                 .putInt("hour",time[0]).putInt("minute",time[1]).apply();
             lang=l;ReminderReceiver.schedule(this);
