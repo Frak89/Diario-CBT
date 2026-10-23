@@ -45,3 +45,15 @@ Da GitHub: `Actions → Android FULL AI offline APK → Artifacts` per l'APK gi�
 
 ## Versione
 v0.2.0 prototipo. Modifiche sviluppate nel branch `feature/modern-ui-integrated-qwen3`.
+
+
+## v0.2.4 — Diario CBT su Android
+- Domande più semplici, con suggerimenti concreti nei campi di testo (IT/EN/ES).
+- Emozioni selezionabili con un tocco, anche multiple; resta disponibile la scrittura libera.
+- «Cosa diresti a te stesso con gentilezza?» al posto della domanda riferita a una persona cara.
+- Campi con scorrimento automatico sopra la tastiera e spazio aggiuntivo per le domande successive.
+- **Un solo pulsante REC** per registrazione e trascrizione automatica dopo lo stop; rimosse dettatura e trascrizione separate. È necessario il consenso iniziale all'eventuale trasferimento dell'audio al fornitore del servizio vocale Android, revocabile dalle impostazioni. La trascrizione via `EXTRA_AUDIO_SOURCE` dipende dalla compatibilità del riconoscitore installato sul telefono e richiede Android 13+; se non è supportata, l'audio originale viene conservato e si mostra l'errore reale, senza fingere di aver trascritto.
+- Schermata finale Qwen3 con stato di elaborazione visibile, risultato reale, motivazione degli errori e pulsante di riprova. Non spaccia più il riepilogo predefinito per IA. Controllo IA nelle impostazioni.
+- Icona dell'app ricostruita dalle curve del cervello dello splash, con icona adattiva e versione monocromatica.
+- Attenzione: i dati clinici rimangono sensibili; l'IA locale non invia il diario a servizi remoti, ma il servizio opzionale di trascrizione **può inviare l'audio a un fornitore esterno** dopo il consenso.
+- Non si deve cancellare la vecchia app senza un backup, perché gli APK di test GitHub Actions sono firmati con chiavi di debug non stabili fra build.
