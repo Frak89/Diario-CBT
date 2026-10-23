@@ -44,6 +44,53 @@ public final class ModelManager {
             MAIN.post(()->listener.completed(result));
         });
     }
+    public static boolean bundled(Context ctx){
+        try {
+            android.content.res.AssetFileDescriptor desc=ctx.getAssets().openFd("Qwen3-0.6B.litertlm");
+            desc.close();return true;
+        }catch(IOException ignored){return false;}
+    }
+    public static void installBundled(Context context,AtomicBoolean cancelled,Listener listener){
+        final Context app=context.getApplicationContext();
+        QUEUE.execute(()->{
+            Exception issue=null;
+            try {installBundledNow(app,cancelled,listener);}
+            catch(Exception ex){issue=ex;}
+            Exception finalIssue=issue;
+            MAIN.post(()->listener.completed(finalIssue));
+        });
+    }
+    private static void installBundledNow(Context app,AtomicBoolean cancelled,Listener listener) throws Exception {
+        if(ready(app)){MAIN.post(()->listener.progress(BYTES,BYTES));return;}
+        if(!bundled(app))throw new FileNotFoundException("Built-in Qwen3 model missing");
+        File dest=file(app),part=new File(dest.getParentFile(),"Qwen3-0.6B.part");
+        // Always restart asset copy so an interrupted network partial file is never mistaken for model data.
+        MessageDigest hash=MessageDigest.getInstance("SHA-256");
+        long count=0,lastProgress=0;
+        try(InputStream in=new BufferedInputStream(app.getAssets().open("Qwen3-0.6B.litertlm"));
+            FileOutputStream out=new FileOutputStream(part,false)){
+            byte[] chunk=new byte[256*1024];int n;
+            while((n=in.read(chunk))!=-1){
+                if(cancelled.get())throw new InterruptedIOException("Installation stopped");
+                out.write(chunk,0,n);hash.update(chunk,0,n);count+=n;
+                if(count>BYTES)throw new IOException("Unexpected bundled model size");
+                if(count-lastProgress>=2*1024*1024){
+                    lastProgress=count;long value=count;MAIN.post(()->listener.progress(value,BYTES));
+                }
+            }
+            out.getFD().sync();
+        }
+        StringBuilder result=new StringBuilder();
+        for(byte b:hash.digest())result.append(String.format(Locale.ROOT,"%02x",b&255));
+        if(count!=BYTES || !SHA256.equals(result.toString())){
+            part.delete();throw new IOException("Bundled model integrity check failed");
+        }
+        try {Files.move(part.toPath(),dest.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}
+        catch(AtomicMoveNotSupportedException ex){Files.move(part.toPath(),dest.toPath(),StandardCopyOption.REPLACE_EXISTING);}
+        if(!app.getSharedPreferences("model_integrity",0).edit().putString("sha",SHA256).commit())
+            throw new IOException("Unable to mark verified model");
+        MAIN.post(()->listener.progress(BYTES,BYTES));
+    }
     private static void downloadNow(Context app,AtomicBoolean cancelled,Listener listener) throws Exception {
         File dest=file(app),part=new File(dest.getParentFile(),"Qwen3-0.6B.part");
         if(ready(app)){MAIN.post(()->listener.progress(BYTES,BYTES));return;}
