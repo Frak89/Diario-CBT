@@ -732,7 +732,11 @@ public class MainActivity extends Activity {
         JSONObject sessions=document.optJSONObject("sessions");
         JSONObject legacy=sessions==null?null:sessions.optJSONObject(day);
         JSONObject history=document.optJSONObject("history");
-        if(history!=null&&history.has(day)&&hasDiaryContent(legacy)){
+        boolean hasFinishedLegacy=legacy!=null&&(
+            legacy.optBoolean("diaryRegistered",false)
+            ||!legacy.optString("completedOn","").isEmpty()
+            ||!legacy.optString("reportStatus","").isEmpty());
+        if(history!=null&&history.has(day)&&hasFinishedLegacy&&hasDiaryContent(legacy)){
             try{
                 JSONObject safeCopy=new JSONObject(legacy.toString());
                 set(safeCopy,"_legacyEntry",true);
@@ -884,7 +888,19 @@ public class MainActivity extends Activity {
         content.addView(back);space(content,16);
         content.addView(label(tr("DIARIO ARCHIVIATO","ARCHIVED JOURNAL","DIARIO ARCHIVADO"),
             13,CYAN,true));space(content,4);
-        content.addView(label(viewedDay,25,FG,true));space(content,10);
+        content.addView(label(viewedDay,25,FG,true));space(content,8);
+        String recordedAt=entry.optString("recordedAt",entry.optString("registeredAt",""));
+        if(!recordedAt.isEmpty()){
+            String displayTime=recordedAt;
+            try{
+                displayTime=java.time.Instant.parse(recordedAt)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+            }catch(Exception ignored){}
+            content.addView(label(tr("Registrazione alle ","Recorded at ","Registro a las ")+
+                displayTime,13,SUB,false));
+        }
+        space(content,14);
         if(history.length()>1){
             content.addView(label(tr("Registrazioni del giorno","Entries recorded today","Registros del día"),
                 13,SUB,true));space(content,8);
