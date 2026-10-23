@@ -1,7 +1,7 @@
 name: Android test release
 on:
   push:
-    branches: [main, feature/android-cbt-voice-ai, feature/modern-ui-integrated-qwen3]
+    branches: [main, feature/android-cbt-voice-ai, feature/modern-ui-integrated-qwen3, feature/rating-buttons-0-10]
   workflow_dispatch:
 jobs:
   android:

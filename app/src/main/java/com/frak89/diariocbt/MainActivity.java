@@ -27,6 +27,7 @@ public class MainActivity extends Activity {
     private final int BACK=0xff080c1e, CARD=0xff141e35, FG=0xfff2f6ff, SUB=0xffa3b3d0,
       CYAN=0xff62e8ec, GOLD=0xffffc347, PURPLE=0xffaa85fa;
     private boolean changingPage=false;
+    private boolean completingSession=false;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private JSONObject document;
     private String date,lang;
@@ -39,6 +40,8 @@ public class MainActivity extends Activity {
     private MediaRecorder recorder;
     private MediaPlayer player;
     private String recordingKey;
+    private Button activeRecordingButton;
+    private android.animation.ObjectAnimator recordingPulse;
     private float downX,downY;
     private boolean building;
     private int d(float px) {return (int)(px*getResources().getDisplayMetrics().density+.5f);}
@@ -102,6 +105,7 @@ public class MainActivity extends Activity {
         if(target<0||target>6||changingPage||target==step)return;
         changingPage=true;
         final int direction=target>step?1:-1;
+        if(recorder!=null)stopRecording();
         saveDraft();
         ViewGroup host=findViewById(android.R.id.content);
         View previous=host.getChildCount()>0?host.getChildAt(0):null;
@@ -195,8 +199,7 @@ public class MainActivity extends Activity {
         if(step>0) foot.addView(new View(this),new LinearLayout.LayoutParams(d(10),1));
         Button next=button(step==6?tr("Termina","Done","Terminar"):tr("Avanti →","Next →","Siguiente →"),true);
         foot.addView(next,new LinearLayout.LayoutParams(0,d(52),1));
-        next.setOnClickListener(v->{if(step<6)navigate(step+1);else notifyUser(tr(
-           "La tua sessione è salvata.","Your session is saved.","Tu sesión está guardada."));});
+        next.setOnClickListener(v->{if(step<6)navigate(step+1);else finishSession();});
         layout.addView(foot);
         if(step<6){
             space(layout,10);
@@ -207,22 +210,23 @@ public class MainActivity extends Activity {
         building=false;
     }
     private void addQuestion(LinearLayout card,String question,String key,int qIndex){
+        if(step==1 || (step==4 && qIndex==2)){
+            card.addView(RatingButtons.create(this,question,session().optString(key,""),step==1,lang,
+                score->{set(session(),key,Integer.toString(score));persist();},
+                ()->speak(question)));
+            space(card,14);return;
+        }
         TextView title=label(question,16,FG,true);card.addView(title);space(card,6);
         EditText answer=new EditText(this);
         answer.setTextSize(16);answer.setTextColor(FG);answer.setHintTextColor(0xff7e90aa);
         answer.setBackground(bg(BACK,0xff354362));
         answer.setPadding(d(12),d(12),d(12),d(12));
         answer.setGravity(Gravity.TOP|Gravity.START);
-        if(step==1){
-            answer.setSingleLine(true);answer.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-            answer.setHint("0–10");
-        } else {
-            answer.setMinLines(2);answer.setMaxLines(6);
-            answer.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|
-                android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-            answer.setHint(tr("Scrivi qui oppure usa il microfono…","Type or use the microphone…",
-              "Escribe aquí o usa el micrófono…"));
-        }
+        answer.setMinLines(2);answer.setMaxLines(6);
+        answer.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        answer.setHint(tr("Scrivi qui oppure usa il microfono…","Type or use the microphone…",
+          "Escribe aquí o usa el micrófono…"));
         answer.setText(session().optString(key,""));
         currentFields.add(answer);currentKeys.add(key);
         card.addView(answer,new LinearLayout.LayoutParams(-1,-2));space(card,6);
@@ -242,6 +246,10 @@ public class MainActivity extends Activity {
         rec.setOnClickListener(v->toggleRecord(key,rec));tools.addView(rec,new LinearLayout.LayoutParams(0,d(45),1));
         Button play=button("▶",false);play.setContentDescription(tr("Riascolta risposta","Replay recording","Reproducir grabación"));
         play.setOnClickListener(v->playRecording(key));tools.addView(play,new LinearLayout.LayoutParams(0,d(45),1));
+        Button transcribe=button("✍",false);
+        transcribe.setContentDescription(tr("Trascrivi audio registrato","Transcribe recorded audio","Transcribir audio grabado"));
+        transcribe.setOnClickListener(v->transcribeAudio(key,answer));
+        tools.addView(transcribe,new LinearLayout.LayoutParams(0,d(45),1));
         Button readAnswer=button("🔉",false);
         readAnswer.setContentDescription(tr("Ascolta la risposta","Read answer aloud","Escuchar respuesta"));
         readAnswer.setOnClickListener(v->speak(answer.getText().toString()));
@@ -256,9 +264,7 @@ public class MainActivity extends Activity {
              "Measures completed reflection tasks, not mental health or personal worth.",
              "Mide ejercicios completados, no la salud mental ni el valor personal."),
               13,SUB,false);panel.addView(explain);space(panel,18);
-        Button generate=button(tr("Concludi e analizza","Complete and reflect","Terminar y analizar"),true);
-        generate.setOnClickListener(v->completeAndAnalyze());panel.addView(generate);
-        space(panel,18);
+        space(panel,8);
         String report=s.optString("report","");
         boolean ai=s.optBoolean("aiReport",false);
         TextView title=label(ai?tr("OSSERVAZIONE IA LOCALE","LOCAL AI OBSERVATION","OBSERVACIÓN IA LOCAL"):
@@ -313,6 +319,58 @@ public class MainActivity extends Activity {
           tr("PROSSIMI PASSI: Prova questa azione concreta: ",
              "NEXT STEPS: Try this concrete action: ","PRÓXIMOS PASOS: Prueba esta acción concreta: ")+action;
         return t+"\n\n"+a+"\n\n"+next;
+    }
+    private void finishSession(){
+        if(completingSession)return;
+        if(recorder!=null)stopRecording();
+        saveDraft();
+        ArrayList<String> toTranscribe=new ArrayList<>();
+        for(int page=0;page<6;page++){
+            for(int n=0;n<3;n++){
+                if(page==1||(page==4&&n==2))continue;
+                String key="p"+page+"_"+n;
+                if(audioFile(key).isFile()&&!session().optBoolean("transcribed_"+key,false))
+                    toTranscribe.add(key);
+            }
+        }
+        if(toTranscribe.isEmpty()||!RecordingTranscriber.supported(this)){
+            if(!toTranscribe.isEmpty())notifyUser(tr(
+              "La trascrizione offline non è disponibile su questo dispositivo; gli audio restano salvati.",
+              "Offline transcription is unavailable; recordings remain saved.",
+              "La transcripción sin conexión no está disponible; los audios siguen guardados."));
+            completeAndAnalyze();return;
+        }
+        completingSession=true;
+        notifyUser(tr("Trascrivo le registrazioni prima del riepilogo…",
+          "Transcribing recordings before your reflection…",
+          "Transcribiendo las grabaciones antes del resumen…"));
+        finishTranscriptions(toTranscribe,0);
+    }
+    private void finishTranscriptions(ArrayList<String> keys,int position){
+        if(isFinishing())return;
+        if(position>=keys.size()){
+            completingSession=false;
+            completeAndAnalyze();
+            return;
+        }
+        String key=keys.get(position);
+        RecordingTranscriber.start(this,audioFile(key),I18n.locale(lang),(text,error)->{
+            if(!isFinishing()&&error==null&&text!=null&&!text.trim().isEmpty()){
+                appendTranscript(key,text,null);
+            }
+            finishTranscriptions(keys,position+1);
+        });
+    }
+    private void appendTranscript(String key,String transcript,EditText activeField){
+        JSONObject values=session();
+        String before=values.optString(key,"").trim();
+        String after=before.isEmpty()?transcript.trim():before+"\n"+transcript.trim();
+        set(values,key,after);
+        set(values,"transcribed_"+key,true);
+        persist();
+        if(activeField!=null&&activeField.isAttachedToWindow()){
+            activeField.setText(after);activeField.setSelection(activeField.length());
+        }
     }
     private void completeAndAnalyze(){
         saveDraft();
@@ -402,11 +460,35 @@ public class MainActivity extends Activity {
     }
     private File audioFile(String key){File dir=new File(getFilesDir(),"audio");dir.mkdirs();
       return new File(dir,date+"_"+key+".m4a");}
+    private void recordingVisual(Button btn,boolean isRecording){
+        btn.setText(isRecording?"⏹ REC":"⏺");
+        btn.setTextSize(isRecording?12:14);
+        btn.setTextColor(FG);
+        btn.setBackground(bg(isRecording?0xffe32f54:CARD,
+                             isRecording?0xffffb9cc:0xff35405e));
+        btn.setContentDescription(isRecording?
+          tr("Registrazione in corso: premi per fermare",
+             "Recording: tap to stop","Grabando: toca para detener"):
+          tr("Registra voce","Record voice","Grabar voz"));
+    }
+    private void stopRecording(){
+        if(recorder==null)return;
+        try{recorder.stop();}
+        catch(Exception ex){if(recordingKey!=null)audioFile(recordingKey).delete();}
+        finally{recorder.release();recorder=null;}
+        if(recordingPulse!=null){recordingPulse.cancel();recordingPulse=null;}
+        if(activeRecordingButton!=null){
+            recordingVisual(activeRecordingButton,false);
+            activeRecordingButton.setAlpha(1f);
+        }
+        activeRecordingButton=null;recordingKey=null;
+    }
     private void toggleRecord(String key,Button btn){
         if(recorder!=null){
-            try{recorder.stop();}catch(Exception ex){audioFile(recordingKey).delete();}
-            recorder.release();recorder=null;recordingKey=null;btn.setText("⏺");
-            notifyUser(tr("Registrazione terminata.","Recording saved.","Grabación guardada."));
+            stopRecording();
+            notifyUser(tr("Audio salvato. Premi ✍ per trascriverlo.",
+                "Recording saved. Tap ✍ to transcribe.",
+                "Audio guardado. Pulsa ✍ para transcribir."));
             return;
         }
         if(!micPermission())return;
@@ -418,11 +500,54 @@ public class MainActivity extends Activity {
             recorder.setAudioEncodingBitRate(64000);
             recorder.setAudioSamplingRate(16000);
             recorder.setOutputFile(audioFile(key).getAbsolutePath());
-            recorder.prepare();recorder.start();recordingKey=key;btn.setText("⏹");
+            recorder.prepare();recorder.start();
+            recordingKey=key;activeRecordingButton=btn;
+            recordingVisual(btn,true);
+            recordingPulse=android.animation.ObjectAnimator.ofFloat(btn,"alpha",1.0f,0.60f,1.0f);
+            recordingPulse.setDuration(900);
+            recordingPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            recordingPulse.start();
         }catch(Exception ex){
             if(recorder!=null){recorder.release();recorder=null;}
+            recordingKey=null;activeRecordingButton=null;
+            recordingVisual(btn,false);
             notifyUser(tr("Impossibile registrare.","Could not record.","No se pudo grabar."));
         }
+    }
+    private void transcribeAudio(String key,EditText answer){
+        if(recorder!=null){
+            notifyUser(tr("Ferma la registrazione prima di trascriverla.",
+                "Stop recording before transcribing.",
+                "Detén la grabación antes de transcribir."));return;
+        }
+        File recording=audioFile(key);
+        if(!recording.isFile()||recording.length()<100){
+            notifyUser(tr("Non trovo una registrazione per questa risposta.",
+                "No recording for this answer.",
+                "No hay una grabación para esta respuesta."));return;
+        }
+        if(!RecordingTranscriber.supported(this)){
+            notifyUser(tr("Trascrizione audio offline non supportata dal riconoscitore installato.",
+                "Offline transcription is not supported by the installed speech recognizer.",
+                "El reconocedor instalado no admite transcripción sin conexión."));return;
+        }
+        notifyUser(tr("Trascrizione audio locale in corso…",
+            "On-device recording transcription…",
+            "Transcripción local de audio en curso…"));
+        RecordingTranscriber.start(this,recording,I18n.locale(lang),(text,error)->{
+            if(isFinishing())return;
+            if(error!=null||text==null||text.trim().isEmpty()){
+                notifyUser(tr("Trascrizione non riuscita. L'audio è conservato.",
+                    "Transcription failed. The recording was kept.",
+                    "Falló la transcripción. Se guardó la grabación.")+
+                    (error!=null?" ("+error.getMessage()+")":""));
+                return;
+            }
+            appendTranscript(key,text,answer);
+            notifyUser(tr("Trascrizione salvata nel diario.",
+                "Transcript saved to your journal.",
+                "Transcripción guardada en el diario."));
+        });
     }
     private void playRecording(String key){
         File f=audioFile(key);
