@@ -384,52 +384,25 @@ public class MainActivity extends Activity {
         if(completingSession)return;
         if(recorder!=null)stopRecording();
         saveDraft();
-        ArrayList<String> toTranscribe=new ArrayList<>();
-        for(int page=0;page<6;page++){
-            for(int n=0;n<3;n++){
-                if(page==1||(page==4&&n==2))continue;
-                String key="p"+page+"_"+n;
-                if(audioFile(key).isFile()&&!session().optBoolean("transcribed_"+key,false))
-                    toTranscribe.add(key);
-            }
-        }
-        if(toTranscribe.isEmpty()||!RecordingTranscriber.supported(this)){
-            if(!toTranscribe.isEmpty())notifyUser(tr(
-              "La trascrizione offline non è disponibile su questo dispositivo; gli audio restano salvati.",
-              "Offline transcription is unavailable; recordings remain saved.",
-              "La transcripción sin conexión no está disponible; los audios siguen guardados."));
-            completeAndAnalyze();return;
-        }
-        completingSession=true;
-        notifyUser(tr("Trascrivo le registrazioni prima del riepilogo…",
-          "Transcribing recordings before your reflection…",
-          "Transcribiendo las grabaciones antes del resumen…"));
-        finishTranscriptions(toTranscribe,0);
-    }
-    private void finishTranscriptions(ArrayList<String> keys,int position){
-        if(isFinishing())return;
-        if(position>=keys.size()){
-            completingSession=false;
-            completeAndAnalyze();
+        if(transcriptRunning){
+            finishAfterTranscript=true;
+            notifyUser(tr("Attendo la trascrizione, poi preparo l'osservazione.",
+              "Waiting for transcription before generating the reflection.",
+              "Esperando la transcripción para generar la observación."));
             return;
         }
-        String key=keys.get(position);
-        RecordingTranscriber.start(this,audioFile(key),I18n.locale(lang),(text,error)->{
-            if(!isFinishing()&&error==null&&text!=null&&!text.trim().isEmpty()){
-                appendTranscript(key,text,null);
-            }
-            finishTranscriptions(keys,position+1);
-        });
+        completeAndAnalyze();
     }
-    private void appendTranscript(String key,String transcript,EditText activeField){
+    private void appendTranscript(String key,String transcript,EditText field){
+        if(transcript==null||transcript.trim().isEmpty())return;
         JSONObject values=session();
-        String before=values.optString(key,"").trim();
-        String after=before.isEmpty()?transcript.trim():before+"\n"+transcript.trim();
-        set(values,key,after);
-        set(values,"transcribed_"+key,true);
-        persist();
-        if(activeField!=null&&activeField.isAttachedToWindow()){
-            activeField.setText(after);activeField.setSelection(activeField.length());
+        String existing=values.optString(key,"").trim();
+        String updated=existing.isEmpty()?transcript.trim():existing+"\n"+transcript.trim();
+        set(values,key,updated);
+        set(values,"transcribed_"+key,true);persist();
+        if(field!=null&&field.isAttachedToWindow()){
+            field.setText(updated);field.setSelection(field.length());
+            scrollFieldIntoView(field);
         }
     }
     private void completeAndAnalyze(){
@@ -533,25 +506,60 @@ public class MainActivity extends Activity {
     }
     private void stopRecording(){
         if(recorder==null)return;
+        String endedKey=recordingKey;boolean saved=true;
         try{recorder.stop();}
-        catch(Exception ex){if(recordingKey!=null)audioFile(recordingKey).delete();}
-        finally{recorder.release();recorder=null;}
+        catch(Exception ex){
+            saved=false;
+            if(endedKey!=null)audioFile(endedKey).delete();
+        }finally{recorder.release();recorder=null;}
         if(recordingPulse!=null){recordingPulse.cancel();recordingPulse=null;}
         if(activeRecordingButton!=null){
             recordingVisual(activeRecordingButton,false);
             activeRecordingButton.setAlpha(1f);
         }
         activeRecordingButton=null;recordingKey=null;
-    }
-    private void toggleRecord(String key,Button btn){
-        if(recorder!=null){
-            stopRecording();
-            notifyUser(tr("Audio salvato. Premi ✍ per trascriverlo.",
-                "Recording saved. Tap ✍ to transcribe.",
-                "Audio guardado. Pulsa ✍ para transcribir."));
+        if(!saved||endedKey==null){
+            notifyUser(tr("Registrazione non riuscita.","Recording failed.","Falló la grabación."));
             return;
         }
+        if(getSharedPreferences("options",0).getBoolean("online_stt_consent",false))
+            autoTranscribe(endedKey);
+        else notifyUser(tr("Audio salvato (trascrizione online disattivata).",
+            "Audio saved (online transcription disabled).",
+            "Audio guardado (transcripción en línea desactivada)."));
+    }
+    private void toggleRecord(String key,Button btn){
+        if(recorder!=null){stopRecording();return;}
+        if(transcriptRunning){
+            notifyUser(tr("La registrazione precedente è ancora in trascrizione.",
+                "The previous recording is still being transcribed.",
+                "La grabación anterior sigue transcribiéndose."));return;
+        }
         if(!micPermission())return;
+        android.content.SharedPreferences p=getSharedPreferences("options",0);
+        if(!p.getBoolean("stt_choice_made",false)){
+            new AlertDialog.Builder(this)
+              .setTitle(tr("Registrazione e trascrizione","Recording and transcription","Grabación y transcripción"))
+              .setMessage(tr(
+                 "Il pulsante REC salva una copia della registrazione sul telefono. Per ottenere automaticamente il testo, il servizio vocale di Android può inviare l'audio a un fornitore esterno tramite Internet. I dati del diario non vengono inviati dall'IA locale. Vuoi consentire la trascrizione online?",
+                 "REC saves an audio copy on your phone. For automatic transcription, Android's speech service may send recorded audio to an external provider over the Internet. The local AI does not upload your journal. Allow online transcription?",
+                 "REC guarda una copia del audio en el teléfono. Para transcribir automáticamente, el servicio de voz de Android puede enviar el audio a un proveedor externo por Internet. La IA local no envía tu diario. ¿Permitir transcripción en línea?"))
+              .setPositiveButton(tr("Consenti e registra","Allow and record","Permitir y grabar"),(dialog,which)->{
+                  p.edit().putBoolean("online_stt_consent",true).putBoolean("stt_choice_made",true).apply();
+                  beginAudioRecording(key,btn);
+              })
+              .setNeutralButton(tr("Solo registra","Record only","Solo grabar"),(dialog,which)->{
+                  p.edit().putBoolean("online_stt_consent",false).putBoolean("stt_choice_made",true).apply();
+                  beginAudioRecording(key,btn);
+              })
+              .setNegativeButton(tr("Annulla","Cancel","Cancelar"),null)
+              .show();
+            return;
+        }
+        beginAudioRecording(key,btn);
+    }
+    private void beginAudioRecording(String key,Button btn){
+        if(recorder!=null||transcriptRunning||!micPermission())return;
         try{
             recorder=Build.VERSION.SDK_INT>=31?new MediaRecorder(this):new MediaRecorder();
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
@@ -561,52 +569,55 @@ public class MainActivity extends Activity {
             recorder.setAudioSamplingRate(16000);
             recorder.setOutputFile(audioFile(key).getAbsolutePath());
             recorder.prepare();recorder.start();
-            recordingKey=key;activeRecordingButton=btn;
-            recordingVisual(btn,true);
+            set(session(),"transcribed_"+key,false);persist();
+            recordingKey=key;activeRecordingButton=btn;recordingVisual(btn,true);
             recordingPulse=android.animation.ObjectAnimator.ofFloat(btn,"alpha",1.0f,0.60f,1.0f);
             recordingPulse.setDuration(900);
             recordingPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE);
             recordingPulse.start();
         }catch(Exception ex){
             if(recorder!=null){recorder.release();recorder=null;}
-            recordingKey=null;activeRecordingButton=null;
-            recordingVisual(btn,false);
+            recordingKey=null;activeRecordingButton=null;recordingVisual(btn,false);
             notifyUser(tr("Impossibile registrare.","Could not record.","No se pudo grabar."));
         }
     }
-    private void transcribeAudio(String key,EditText answer){
-        if(recorder!=null){
-            notifyUser(tr("Ferma la registrazione prima di trascriverla.",
-                "Stop recording before transcribing.",
-                "Detén la grabación antes de transcribir."));return;
-        }
+    private void autoTranscribe(String key){
         File recording=audioFile(key);
-        if(!recording.isFile()||recording.length()<100){
-            notifyUser(tr("Non trovo una registrazione per questa risposta.",
-                "No recording for this answer.",
-                "No hay una grabación para esta respuesta."));return;
-        }
+        if(!recording.isFile())return;
         if(!RecordingTranscriber.supported(this)){
-            notifyUser(tr("Trascrizione audio offline non supportata dal riconoscitore installato.",
-                "Offline transcription is not supported by the installed speech recognizer.",
-                "El reconocedor instalado no admite transcripción sin conexión."));return;
+            set(session(),"speechError_"+key,"NO_RECOGNITION_SERVICE");persist();
+            notifyUser(tr("Servizio vocale Android non disponibile. Audio salvato.",
+                "Android speech service is unavailable. Audio saved.",
+                "Servicio de voz de Android no disponible. Audio guardado."));
+            return;
         }
-        notifyUser(tr("Trascrizione audio locale in corso…",
-            "On-device recording transcription…",
-            "Transcripción local de audio en curso…"));
-        RecordingTranscriber.start(this,recording,I18n.locale(lang),(text,error)->{
+        transcriptRunning=true;
+        notifyUser(tr("Audio salvato. Trascrizione automatica in corso…",
+            "Audio saved. Transcribing automatically…",
+            "Audio guardado. Transcripción automática en curso…"));
+        RecordingTranscriber.start(this,recording,I18n.locale(lang),(transcript,error)->{
+            transcriptRunning=false;
             if(isFinishing())return;
-            if(error!=null||text==null||text.trim().isEmpty()){
-                notifyUser(tr("Trascrizione non riuscita. L'audio è conservato.",
-                    "Transcription failed. The recording was kept.",
-                    "Falló la transcripción. Se guardó la grabación.")+
-                    (error!=null?" ("+error.getMessage()+")":""));
-                return;
+            if(error!=null||transcript==null||transcript.trim().isEmpty()){
+                String detail=error==null?"No speech recognized":error.getMessage();
+                set(session(),"speechError_"+key,detail==null?"Unknown":detail.substring(0,Math.min(detail.length(),120)));
+                persist();
+                notifyUser(tr("Audio conservato. Trascrizione non riuscita: ",
+                    "Audio preserved. Transcription failed: ",
+                    "Audio conservado. Falló la transcripción: ")+detail);
+            }else{
+                EditText visibleField=null;
+                for(int i=0;i<currentKeys.size();i++)
+                    if(currentKeys.get(i).equals(key)){visibleField=currentFields.get(i);break;}
+                appendTranscript(key,transcript,visibleField);
+                notifyUser(tr("Testo trascritto e salvato nel diario.",
+                    "Transcribed text saved to your journal.",
+                    "Texto transcrito y guardado en el diario."));
             }
-            appendTranscript(key,text,answer);
-            notifyUser(tr("Trascrizione salvata nel diario.",
-                "Transcript saved to your journal.",
-                "Transcripción guardada en el diario."));
+            if(finishAfterTranscript){
+                finishAfterTranscript=false;
+                completeAndAnalyze();
+            }
         });
     }
     private void playRecording(String key){
