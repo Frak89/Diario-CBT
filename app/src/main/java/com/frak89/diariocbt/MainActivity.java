@@ -27,6 +27,7 @@ public class MainActivity extends Activity {
     private final int BACK=0xff080c1e, CARD=0xff141e35, FG=0xfff2f6ff, SUB=0xffa3b3d0,
       CYAN=0xff62e8ec, GOLD=0xffffc347, PURPLE=0xffaa85fa;
     private boolean changingPage=false;
+    private boolean completingSession=false;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private JSONObject document;
     private String date,lang;
@@ -320,8 +321,56 @@ public class MainActivity extends Activity {
         return t+"\n\n"+a+"\n\n"+next;
     }
     private void finishSession(){
+        if(completingSession)return;
         if(recorder!=null)stopRecording();
-        completeAndAnalyze();
+        saveDraft();
+        ArrayList<String> toTranscribe=new ArrayList<>();
+        for(int page=0;page<6;page++){
+            for(int n=0;n<3;n++){
+                if(page==1||(page==4&&n==2))continue;
+                String key="p"+page+"_"+n;
+                if(audioFile(key).isFile()&&!session().optBoolean("transcribed_"+key,false))
+                    toTranscribe.add(key);
+            }
+        }
+        if(toTranscribe.isEmpty()||!RecordingTranscriber.supported(this)){
+            if(!toTranscribe.isEmpty())notifyUser(tr(
+              "La trascrizione offline non è disponibile su questo dispositivo; gli audio restano salvati.",
+              "Offline transcription is unavailable; recordings remain saved.",
+              "La transcripción sin conexión no está disponible; los audios siguen guardados."));
+            completeAndAnalyze();return;
+        }
+        completingSession=true;
+        notifyUser(tr("Trascrivo le registrazioni prima del riepilogo…",
+          "Transcribing recordings before your reflection…",
+          "Transcribiendo las grabaciones antes del resumen…"));
+        finishTranscriptions(toTranscribe,0);
+    }
+    private void finishTranscriptions(ArrayList<String> keys,int position){
+        if(isFinishing())return;
+        if(position>=keys.size()){
+            completingSession=false;
+            completeAndAnalyze();
+            return;
+        }
+        String key=keys.get(position);
+        RecordingTranscriber.start(this,audioFile(key),I18n.locale(lang),(text,error)->{
+            if(!isFinishing()&&error==null&&text!=null&&!text.trim().isEmpty()){
+                appendTranscript(key,text,null);
+            }
+            finishTranscriptions(keys,position+1);
+        });
+    }
+    private void appendTranscript(String key,String transcript,EditText activeField){
+        JSONObject values=session();
+        String before=values.optString(key,"").trim();
+        String after=before.isEmpty()?transcript.trim():before+"\n"+transcript.trim();
+        set(values,key,after);
+        set(values,"transcribed_"+key,true);
+        persist();
+        if(activeField!=null&&activeField.isAttachedToWindow()){
+            activeField.setText(after);activeField.setSelection(activeField.length());
+        }
     }
     private void completeAndAnalyze(){
         saveDraft();
@@ -464,6 +513,41 @@ public class MainActivity extends Activity {
             recordingVisual(btn,false);
             notifyUser(tr("Impossibile registrare.","Could not record.","No se pudo grabar."));
         }
+    }
+    private void transcribeAudio(String key,EditText answer){
+        if(recorder!=null){
+            notifyUser(tr("Ferma la registrazione prima di trascriverla.",
+                "Stop recording before transcribing.",
+                "Detén la grabación antes de transcribir."));return;
+        }
+        File recording=audioFile(key);
+        if(!recording.isFile()||recording.length()<100){
+            notifyUser(tr("Non trovo una registrazione per questa risposta.",
+                "No recording for this answer.",
+                "No hay una grabación para esta respuesta."));return;
+        }
+        if(!RecordingTranscriber.supported(this)){
+            notifyUser(tr("Trascrizione audio offline non supportata dal riconoscitore installato.",
+                "Offline transcription is not supported by the installed speech recognizer.",
+                "El reconocedor instalado no admite transcripción sin conexión."));return;
+        }
+        notifyUser(tr("Trascrizione audio locale in corso…",
+            "On-device recording transcription…",
+            "Transcripción local de audio en curso…"));
+        RecordingTranscriber.start(this,recording,I18n.locale(lang),(text,error)->{
+            if(isFinishing())return;
+            if(error!=null||text==null||text.trim().isEmpty()){
+                notifyUser(tr("Trascrizione non riuscita. L'audio è conservato.",
+                    "Transcription failed. The recording was kept.",
+                    "Falló la transcripción. Se guardó la grabación.")+
+                    (error!=null?" ("+error.getMessage()+")":""));
+                return;
+            }
+            appendTranscript(key,text,answer);
+            notifyUser(tr("Trascrizione salvata nel diario.",
+                "Transcript saved to your journal.",
+                "Transcripción guardada en el diario."));
+        });
     }
     private void playRecording(String key){
         File f=audioFile(key);
