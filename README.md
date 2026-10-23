@@ -57,3 +57,19 @@ v0.2.0 prototipo. Modifiche sviluppate nel branch `feature/modern-ui-integrated-
 - Icona dell'app ricostruita dalle curve del cervello dello splash, con icona adattiva e versione monocromatica.
 - Attenzione: i dati clinici rimangono sensibili; l'IA locale non invia il diario a servizi remoti, ma il servizio opzionale di trascrizione **può inviare l'audio a un fornitore esterno** dopo il consenso.
 - Non si deve cancellare la vecchia app senza un backup, perché gli APK di test GitHub Actions sono firmati con chiavi di debug non stabili fra build.
+
+
+## v0.2.5 — Fix audio STT ERROR_CLIENT (5)
+**Android's `SpeechRecognizer.ERROR_CLIENT=5`** indicates a client-side recognition failure. The Android `EXTRA_AUDIO_SOURCE` recorded-audio option is explicitly optional for recognizer vendors and fails on some Pixel/GrapheneOS configurations. This app no longer uses it for automatic transcription.
+
+**Working cloud pathway**: after REC stops, the saved M4A audio file is sent directly to `https://api.openai.com/v1/audio/transcriptions` with the model `gpt-4o-mini-transcribe`, and the returned text is automatically appended to the answer and encrypted on-device. It requires:
+- An OpenAI API account with active billing and **the user's own API key** (not a ChatGPT subscription). No shared hard-coded API credential is in the APK.
+- Explicit consent from Settings to transmit audio to OpenAI. Audio may contain sensitive personal health information. Turning off consent disables future uploads.
+- Internet access. The recording file remains on the phone even if the request fails.
+- The user's secret is encrypted locally inside the existing AES-GCM / Android Keystore journal store, not in Gradle or GitHub. The input field never redisplays the saved key.
+- Previously saved but untranscribed audio can be retried from Settings using `Trascrivi le vecchie registrazioni di oggi`. A separate transcription button beside each REC is **not** required.
+- The app currently calls the provider directly from the user's personal device. For public distribution with multi-user accounts, replace the direct API key arrangement with an authenticated backend using per-user credentials.
+
+**Not included**: any free, shared transcription API service, or a guarantee that a user's API billing/credential already exists. Without setup, REC continues to preserve audio but makes no false promise of automatic transcription.
+
+**Existing data**: do not uninstall the current APK just to update, unless you have safely backed up its local diary/audio. GitHub Actions tests use an ephemeral debug signing key. These APKs may not be installable over a prior test build.
