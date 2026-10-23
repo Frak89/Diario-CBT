@@ -479,7 +479,22 @@ public class MainActivity extends Activity {
         persist();render();
         String diagnosis=document.optString("diagnosis",""),goals=document.optString("goals","");
         String diary=diaryText();
+        new Handler(Looper.getMainLooper()).postDelayed(()->{
+            if(isFinishing()||!completingSession)return;
+            JSONObject inProgress=session();
+            if(!"generating".equals(inProgress.optString("reportStatus","")))return;
+            completingSession=false;
+            set(inProgress,"reportStatus","error");
+            set(inProgress,"aiError",tr(
+                "La generazione sta impiegando troppo tempo su questo dispositivo. Prova il test IA nelle impostazioni.",
+                "AI generation is taking too long on this device. Try the AI test in Settings.",
+                "La generación tarda demasiado en este dispositivo. Prueba la IA desde Ajustes."));
+            set(inProgress,"report",fallback());
+            set(inProgress,"aiReport",false);
+            persist();if(step==6)render();
+        },180000);
         AiEngine.report(this,lang,diagnosis,goals,diary,(response,error)->{
+            if(!"generating".equals(entry.optString("reportStatus","")))return;
             completingSession=false;
             if(isFinishing())return;
             JSONObject sessions=document.optJSONObject("sessions");
@@ -726,6 +741,14 @@ public class MainActivity extends Activity {
         EditText goals=new EditText(this);goals.setTextColor(FG);
         goals.setText(document.optString("goals",""));body.addView(goals);space(body,14);
         android.content.SharedPreferences p=getSharedPreferences("options",0);
+        CheckBox speechConsent=new CheckBox(this);
+        speechConsent.setTextColor(FG);
+        speechConsent.setText(tr(
+           "Trascrizione automatica tramite servizio vocale online Android (audio potenzialmente inviato al fornitore)",
+           "Automatic transcription via Android online speech service (audio may be sent to its provider)",
+           "Transcripción automática con el servicio de voz online de Android (el audio puede enviarse al proveedor)"));
+        speechConsent.setChecked(p.getBoolean("online_stt_consent",false));
+        body.addView(speechConsent);space(body,12);
         CheckBox reminder=new CheckBox(this);reminder.setTextColor(FG);
         reminder.setText(tr("Promemoria giornaliero","Daily reminder","Recordatorio diario"));
         reminder.setChecked(p.getBoolean("enabled",false));body.addView(reminder);
@@ -754,7 +777,27 @@ public class MainActivity extends Activity {
            tr("Attiva IA Qwen3 integrata (~614 MB)","Activate built-in Qwen3 AI (~614 MB)",
            "Activar IA Qwen3 integrada (~614 MB)"),false);
         importButton.setOnClickListener(v->downloadBuiltInModel());
-        body.addView(importButton);space(body,12);
+        body.addView(importButton);space(body,7);
+        Button testAi=button(tr("Verifica il funzionamento dell'IA sul telefono",
+             "Test AI on this device","Probar la IA en este teléfono"),false);
+        testAi.setOnClickListener(v->{
+            if(!AiEngine.available(this)){
+                notifyUser(tr("Modello Qwen3 non ancora pronto.",
+                    "Qwen3 model not ready.","El modelo Qwen3 no está listo."));return;
+            }
+            notifyUser(tr("Verifica IA locale in corso…","Testing local AI…",
+              "Probando IA local…"));
+            AiEngine.encouragement(this,lang,document.optString("diagnosis",""),
+                document.optString("goals",""),(answer,error)->{
+                if(isFinishing())return;
+                new AlertDialog.Builder(this)
+                    .setTitle(error==null?tr("Test IA riuscito","AI test succeeded","Prueba IA correcta"):
+                      tr("Errore di inferenza IA","AI inference error","Error de inferencia IA"))
+                    .setMessage(error==null?answer:shortAiError(error))
+                    .setPositiveButton("OK",null).show();
+            });
+        });
+        body.addView(testAi);space(body,12);
         Button save=button(tr("Salva impostazioni","Save settings","Guardar ajustes"),true);
         body.addView(save);
         AlertDialog dialog=new AlertDialog.Builder(this).setView(sc).create();
@@ -766,6 +809,8 @@ public class MainActivity extends Activity {
             persist();
             String l=languages.getSelectedItemPosition()==1?"en":languages.getSelectedItemPosition()==2?"es":"it";
             p.edit().putString("lang",l).putBoolean("enabled",reminder.isChecked())
+                .putBoolean("online_stt_consent",speechConsent.isChecked())
+                .putBoolean("stt_choice_made",true)
                 .putBoolean("fullscreen",fullscreen.isChecked())
                 .putInt("hour",time[0]).putInt("minute",time[1]).apply();
             lang=l;ReminderReceiver.schedule(this);
@@ -783,6 +828,7 @@ public class MainActivity extends Activity {
             dialog.dismiss();configureVoice();render();
         });
         dialog.show();
+        dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
     private void offerBuiltInAI(){
         if(isFinishing()||AiEngine.available(this))return;
