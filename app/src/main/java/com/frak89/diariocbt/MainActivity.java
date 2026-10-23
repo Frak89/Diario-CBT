@@ -619,9 +619,18 @@ public class MainActivity extends Activity {
             "Audio saved. Configure the API in Settings to transcribe it.",
             "Audio guardado. Configura la API en Ajustes para transcribirlo."));
     }
+    private String sttProvider(){
+        return getSharedPreferences("options",0).getString("stt_provider","groq");
+    }
+    private String sttKey(String provider){
+        return document.optString("groq".equals(provider)?"groqApiKey":"cloudSttApiKey","");
+    }
     private boolean cloudSttReady(){
-        return getSharedPreferences("options",0).getBoolean("cloud_stt_consent",false)
-           && !document.optString("cloudSttApiKey","").isEmpty();
+        android.content.SharedPreferences p=getSharedPreferences("options",0);
+        String provider=sttProvider();
+        return p.getBoolean("cloud_stt_consent",false)
+            && provider.equals(p.getString("stt_consent_provider",""))
+            && !sttKey(provider).isEmpty();
     }
     private void toggleRecord(String key,Button btn){
         if(recorder!=null){stopRecording();return;}
@@ -636,9 +645,9 @@ public class MainActivity extends Activity {
              .setTitle(tr("Trascrizione automatica online","Automatic online transcription",
                "Transcripción automática en línea"))
              .setMessage(tr(
-               "Il servizio vocale Android non accetta la registrazione (errore 5). Per trascrivere davvero i file M4A serve un servizio esterno. L'app può usare OpenAI Speech-to-Text, configurando una tua chiave API e il consenso all'invio dell'audio. L'uso API può avere un costo; non è incluso nell'abbonamento ChatGPT. Puoi comunque registrare solo l'audio.",
-               "The Android speech service rejected recorded audio (error 5). To transcribe saved M4A files, configure your own OpenAI Speech-to-Text API credential and consent to sending audio. API usage may cost money and is separate from ChatGPT subscriptions. You can still record audio only.",
-               "El servicio de voz Android rechazó el audio grabado (error 5). Para transcribir archivos M4A configura una clave personal de OpenAI Speech-to-Text y autoriza el envío de audio. Puede tener coste adicional y no está incluido en ChatGPT. También puedes grabar solo audio."))
+               "Per trascrivere automaticamente i file M4A puoi configurare Groq Whisper (piano gratuito con limiti) oppure OpenAI (API a pagamento). Serve la chiave personale del servizio selezionato e il consenso a inviare l'audio; puoi anche registrare senza trascrizione.",
+               "To automatically transcribe saved M4A files, use Groq Whisper (free tier with limits) or OpenAI (paid API), with your personal API key and explicit consent to upload the recording. You can still record without transcription.",
+               "Para transcribir grabaciones M4A puedes usar Groq Whisper (plan gratuito con límites) u OpenAI (API de pago). Se necesita una clave personal y consentimiento para enviar el audio. También puedes grabar sin transcripción."))
              .setPositiveButton(tr("Configura","Configure","Configurar"),(dialog,which)->showSettings())
              .setNeutralButton(tr("Solo registra","Record audio only","Solo grabar"),
                 (dialog,which)->beginAudioRecording(key,btn))
@@ -683,12 +692,13 @@ public class MainActivity extends Activity {
         }
         transcriptRunning=true;
         final String recordedDate=date;
-        final String apiKey=document.optString("cloudSttApiKey","");
+        final String provider=sttProvider();
+        final String apiKey=sttKey(provider);
         final String selectedLang=lang;
         notifyUser(tr("Audio salvato. Trascrizione online in corso…",
             "Audio saved. Online transcription in progress…",
             "Audio guardado. Transcripción online en curso…"));
-        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,(transcript,error)->{
+        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,provider,(transcript,error)->{
             transcriptRunning=false;
             if(isFinishing())return;
             JSONObject sessions=document.optJSONObject("sessions");
@@ -711,11 +721,13 @@ public class MainActivity extends Activity {
                             "La grabación permanece en el teléfono. Reintenta desde Ajustes después de resolver el problema."))
                         .setNegativeButton(tr("Chiudi","Close","Cerrar"),null);
                     if(api.httpStatus==429){
-                        warning.setPositiveButton(tr("Controlla fatturazione API",
-                            "Check API billing","Comprobar facturación API"),(dialog,which)->{
-                            startActivity(new Intent(Intent.ACTION_VIEW,
-                                Uri.parse("https://platform.openai.com/settings/organization/billing/overview")));
-                        });
+                        warning.setPositiveButton("groq".equals(provider)?
+                            tr("Limiti gratuiti Groq","Groq free limits","Límites gratis Groq"):
+                            tr("Controlla fatturazione API","Check API billing","Comprobar facturación API"),
+                            (dialog,which)->startActivity(new Intent(Intent.ACTION_VIEW,
+                              Uri.parse("groq".equals(provider)?
+                                "https://console.groq.com/settings/limits":
+                                "https://platform.openai.com/settings/organization/billing/overview"))));
                     }
                     warning.show();
                 }else{
@@ -780,9 +792,10 @@ public class MainActivity extends Activity {
         if(index>=pending.size()||isFinishing())return;
         String key=pending.get(index);
         File recorded=audioFile(key);
-        String apiKey=document.optString("cloudSttApiKey","");
+        String provider=sttProvider();
+        String apiKey=sttKey(provider);
         String selectedLang=lang;
-        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,(text,error)->{
+        CloudTranscriber.transcribe(recorded,selectedLang,apiKey,provider,(text,error)->{
             if(isFinishing())return;
             if(error==null&&text!=null&&!text.trim().isEmpty()){
                 appendTranscript(key,text,null);
