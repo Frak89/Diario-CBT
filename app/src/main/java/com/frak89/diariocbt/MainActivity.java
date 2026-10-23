@@ -270,9 +270,10 @@ public class MainActivity extends Activity {
         readAnswer.setOnClickListener(v->speak(answer.getText().toString()));
         tools.addView(readAnswer,new LinearLayout.LayoutParams(0,d(45),1));
         card.addView(tools);
-        TextView recHelp=label(tr("REC registra e trascrive automaticamente dopo lo stop (con consenso).",
-              "REC automatically transcribes after stopping (with consent).",
-              "REC transcribe automáticamente al terminar (con consentimiento)."),12,SUB,false);
+        TextView recHelp=label(tr(
+              "REC salva l'audio; con API e consenso configurati lo trascrive automaticamente alla fine.",
+              "REC saves audio; with API and consent enabled it transcribes automatically after stopping.",
+              "REC guarda el audio; con API y consentimiento activos, transcribe al terminar."),12,SUB,false);
         recHelp.setPadding(d(3),d(5),0,d(13));card.addView(recHelp);space(card,12);
     }
     private void scrollFieldIntoView(EditText field){
@@ -809,13 +810,40 @@ public class MainActivity extends Activity {
         EditText goals=new EditText(this);goals.setTextColor(FG);
         goals.setText(document.optString("goals",""));body.addView(goals);space(body,14);
         android.content.SharedPreferences p=getSharedPreferences("options",0);
+        body.addView(label(tr("TRASCRIZIONE ONLINE (facoltativa)",
+            "ONLINE TRANSCRIPTION (optional)",
+            "TRANSCRIPCIÓN ONLINE (opcional)"),15,CYAN,true));
+        space(body,6);
+        body.addView(label(tr(
+           "Per trascrivere i file M4A useremo OpenAI Speech-to-Text (gpt-4o-mini-transcribe). È un servizio API separato da ChatGPT, potenzialmente a pagamento. Solo l'audio di una registrazione viene inviato quando lo autorizzi; il diario e la diagnosi non vengono inviati.",
+           "Recorded M4A files can be transcribed via OpenAI Speech-to-Text (gpt-4o-mini-transcribe). This is a separate potentially paid API service, not included in ChatGPT. Only recordings you authorize are sent; your journal and diagnosis are not uploaded.",
+           "Los audios M4A pueden transcribirse con OpenAI Speech-to-Text (gpt-4o-mini-transcribe). Es un servicio API separado y posiblemente de pago. Solo se envían grabaciones autorizadas, no el diario ni el diagnóstico."),13,SUB,false));
+        space(body,7);
+        EditText cloudKey=new EditText(this);
+        cloudKey.setTextColor(FG);cloudKey.setHintTextColor(SUB);
+        cloudKey.setSingleLine(true);
+        cloudKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            |android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        cloudKey.setHint(document.optString("cloudSttApiKey","").isEmpty()?
+            tr("Inserisci chiave API personale (sk-...)",
+              "Enter your personal API key (sk-...)",
+              "Introduce tu clave API personal (sk-...)"):
+            tr("Chiave salvata e cifrata — lascia vuoto per conservarla",
+              "Encrypted key saved — leave blank to keep it",
+              "Clave cifrada guardada — dejar vacío para conservar"));
+        body.addView(cloudKey);space(body,3);
+        CheckBox removeKey=new CheckBox(this);
+        removeKey.setTextColor(FG);
+        removeKey.setText(tr("Elimina la chiave memorizzata",
+           "Delete stored API key","Eliminar clave API guardada"));
+        body.addView(removeKey);
         CheckBox speechConsent=new CheckBox(this);
         speechConsent.setTextColor(FG);
         speechConsent.setText(tr(
-           "Trascrizione automatica tramite servizio vocale online Android (audio potenzialmente inviato al fornitore)",
-           "Automatic transcription via Android online speech service (audio may be sent to its provider)",
-           "Transcripción automática con el servicio de voz online de Android (el audio puede enviarse al proveedor)"));
-        speechConsent.setChecked(p.getBoolean("online_stt_consent",false));
+           "Autorizzo l'invio delle registrazioni audio al servizio OpenAI per la trascrizione",
+           "I allow recorded audio to be sent to OpenAI for transcription",
+           "Autorizo enviar las grabaciones a OpenAI para transcribirlas"));
+        speechConsent.setChecked(p.getBoolean("cloud_stt_consent",false));
         body.addView(speechConsent);space(body,12);
         CheckBox reminder=new CheckBox(this);reminder.setTextColor(FG);
         reminder.setText(tr("Promemoria giornaliero","Daily reminder","Recordatorio diario"));
@@ -866,19 +894,26 @@ public class MainActivity extends Activity {
             });
         });
         body.addView(testAi);space(body,12);
+        Button recover=button(tr("Trascrivi le vecchie registrazioni di oggi",
+           "Transcribe today's saved recordings",
+           "Transcribir las grabaciones guardadas de hoy"),false);
+        body.addView(recover);space(body,10);
         Button save=button(tr("Salva impostazioni","Save settings","Guardar ajustes"),true);
         body.addView(save);
         AlertDialog dialog=new AlertDialog.Builder(this).setView(sc).create();
+        recover.setOnClickListener(v->{dialog.dismiss();retryUntranscribedToday();});
         save.setOnClickListener(v->{
             String newDiag=diagnosis.getText().toString().trim();
             String oldDiag=document.optString("diagnosis","");
             set(document,"diagnosis",newDiag);set(document,"goals",goals.getText().toString().trim());
+            String typedKey=cloudKey.getText().toString().trim();
+            if(removeKey.isChecked())set(document,"cloudSttApiKey","");
+            else if(!typedKey.isEmpty())set(document,"cloudSttApiKey",typedKey);
             if(!newDiag.equals(oldDiag)){set(document,"splashPhrase","");set(document,"splashDiagnosis","");}
             persist();
             String l=languages.getSelectedItemPosition()==1?"en":languages.getSelectedItemPosition()==2?"es":"it";
             p.edit().putString("lang",l).putBoolean("enabled",reminder.isChecked())
-                .putBoolean("online_stt_consent",speechConsent.isChecked())
-                .putBoolean("stt_choice_made",true)
+                .putBoolean("cloud_stt_consent",speechConsent.isChecked())
                 .putBoolean("fullscreen",fullscreen.isChecked())
                 .putInt("hour",time[0]).putInt("minute",time[1]).apply();
             lang=l;ReminderReceiver.schedule(this);
