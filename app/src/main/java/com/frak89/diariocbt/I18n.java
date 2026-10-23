@@ -27,7 +27,7 @@ public final class I18n {
           {"What small step could you take?","What help might you need?","What went a little better today?"},{}
         };
         if(l.equals("es")) return new String[][]{
-          {"¿En qué has pasado el tiempo hoy?","Quale momento ti è rimasto in mente?","¿Qué has conseguido hacer hoy?"},
+          {"¿En qué has pasado el tiempo hoy?","¿Qué momento recuerdas hoy?","¿Qué has conseguido hacer hoy?"},
           {"Ánimo por la mañana (0–10)","Ánimo por la tarde (0–10)","Ánimo por la noche (0–10)"},
           {"¿Qué pasó, en pocas palabras?","¿Qué pensaste en ese momento?","¿Cómo te sentiste?"},
           {"¿Por qué pensaste eso?","¿Puede haber otra explicación?","¿Qué notaste en el cuerpo?"},
