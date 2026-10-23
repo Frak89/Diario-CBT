@@ -63,6 +63,14 @@ public class MainActivity extends Activity {
             return;
         }
         if(state!=null) step=state.getInt("step",0);
+        JSONObject unfinished=session();
+        if("generating".equals(unfinished.optString("reportStatus",""))){
+            set(unfinished,"reportStatus","interrupted");
+            set(unfinished,"aiError",tr("Analisi interrotta. Tocca «Riprova l'analisi IA».",
+              "Interrupted analysis. Tap Retry AI reflection.",
+              "Análisis interrumpido. Pulsa Reintentar IA."));
+            persist();
+        }
         tts=new TextToSpeech(this,status->{if(status==TextToSpeech.SUCCESS) configureVoice();});
         render();
         new Handler(Looper.getMainLooper()).postDelayed(this::offerBuiltInAI,700);
@@ -317,30 +325,64 @@ public class MainActivity extends Activity {
         space(card,10);
     }
     private void showFinal(LinearLayout panel) {
-        JSONObject s=session();
-        TextView score=label(tr("Indicatore pratica CBT","CBT practice index","Índice de práctica CBT")+"   "+score()+"/10",
-         19,GOLD,true);panel.addView(score);space(panel,6);
-        TextView explain=label(tr("Misura gli esercizi compilati, non la salute mentale o il valore personale.",
-             "Measures completed reflection tasks, not mental health or personal worth.",
-             "Mide ejercicios completados, no la salud mental ni el valor personal."),
-              13,SUB,false);panel.addView(explain);space(panel,18);
-        space(panel,8);
-        String report=s.optString("report","");
-        boolean ai=s.optBoolean("aiReport",false);
-        TextView title=label(ai?tr("OSSERVAZIONE IA LOCALE","LOCAL AI OBSERVATION","OBSERVACIÓN IA LOCAL"):
-           tr("RIFLESSIONE GUIDATA (senza IA)","GUIDED REFLECTION (no AI)","REFLEXIÓN GUIADA (sin IA)"),
-            16,CYAN,true);panel.addView(title);space(panel,10);
-        TextView observations=label(report.isEmpty()?tr(
-           "Completa il diario e premi «Concludi e analizza».",
-           "Finish the journal and tap Complete and reflect.",
-           "Termina el diario y pulsa Terminar y analizar."):report,16,FG,false);
-        panel.addView(observations);space(panel,12);
-        Button hear=button("🔊 "+tr("Ascolta l'osservazione","Listen to reflection","Escuchar reflexión"),false);
-        hear.setOnClickListener(v->speak(observations.getText().toString()));panel.addView(hear);
-        space(panel,15);
-        TextView note=label(tr("Non è una diagnosi o un giudizio clinico.",
-            "Not a diagnosis or clinical judgement.","No es un diagnóstico ni un juicio clínico."),12,SUB,false);
-        panel.addView(note);
+        JSONObject entry=session();
+        TextView score=label(tr("Esercizi CBT completati","Completed CBT exercises","Ejercicios CBT completados")
+            +"   "+score()+"/10",19,GOLD,true);
+        panel.addView(score);space(panel,6);
+        panel.addView(label(tr("Questo punteggio conta gli esercizi svolti: non valuta una diagnosi o la persona.",
+           "This counts completed tasks, not a diagnosis or a person's worth.",
+           "Cuenta las tareas completadas, no una diagnosis ni el valor de la persona."),13,SUB,false));
+        space(panel,22);
+        String report=entry.optString("report","");
+        String status=entry.optString("reportStatus","not_started");
+        boolean ai=entry.optBoolean("aiReport",false);
+        boolean generating="generating".equals(status);
+        TextView title=label(generating?
+          tr("IA QWEN3 • ANALISI IN CORSO","QWEN3 AI • ANALYZING","IA QWEN3 • ANALIZANDO"):
+          ai?tr("OSSERVAZIONE PERSONALIZZATA • IA QWEN3",
+                "PERSONALIZED OBSERVATION • QWEN3 AI","OBSERVACIÓN PERSONALIZADA • IA QWEN3"):
+          tr("RIFLESSIONE GUIDATA • NON GENERATA DALL'IA",
+                "GUIDED REFLECTION • NOT AI-GENERATED",
+                "REFLEXIÓN GUIADA • NO GENERADA POR IA"),16,CYAN,true);
+        panel.addView(title);space(panel,12);
+        if(generating){
+            ProgressBar busy=new ProgressBar(this);
+            panel.addView(busy,new LinearLayout.LayoutParams(d(44),d(44)));
+            TextView inProgress=label(tr(
+                "Qwen3 sta leggendo le risposte sul telefono e preparando osservazioni e suggerimenti. Il tempo dipende dalle prestazioni del dispositivo.",
+                "Qwen3 is analyzing answers locally and preparing suggestions. Processing time depends on your device.",
+                "Qwen3 está analizando las respuestas en el teléfono. El tiempo depende del dispositivo."),15,FG,false);
+            panel.addView(inProgress);space(panel,15);
+        }else{
+            if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
+                String detail=entry.optString("aiError","");
+                TextView warning=label(tr("IA non completata: ","AI did not complete: ",
+                    "La IA no terminó: ")+detail,14,0xffffbd9b,false);
+                panel.addView(warning);space(panel,14);
+            }
+            TextView observation=label(report.isEmpty()?
+               tr("Premi «Termina» per generare l'osservazione.",
+                  "Tap Done to generate your reflection.",
+                  "Pulsa Terminar para generar la observación."):report,16,FG,false);
+            panel.addView(observation);space(panel,14);
+            if(!report.isEmpty()){
+                Button hear=button("🔊 "+tr("Ascolta l'osservazione","Listen to reflection","Escuchar observación"),false);
+                hear.setOnClickListener(v->speak(observation.getText().toString()));
+                panel.addView(hear);space(panel,12);
+            }
+            if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
+                Button retry=button(AiEngine.available(this)?
+                   tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
+                   tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
+                retry.setOnClickListener(v->{
+                    if(AiEngine.available(this))completeAndAnalyze();
+                    else downloadBuiltInModel();
+                });panel.addView(retry);space(panel,12);
+            }
+        }
+        panel.addView(label(tr("Non è una diagnosi né una valutazione medica.",
+          "This is not a medical diagnosis or assessment.",
+          "No es un diagnóstico ni una valoración médica."),12,SUB,false));
     }
     private int score(){
         JSONObject s=session();int n=0;
@@ -405,35 +447,69 @@ public class MainActivity extends Activity {
             scrollFieldIntoView(field);
         }
     }
+    private String shortAiError(Throwable error){
+        Throwable root=error;int tries=0;
+        while(root!=null&&root.getCause()!=null&&tries++<8)root=root.getCause();
+        String reason=root==null?"Unknown error":root.getClass().getSimpleName()+
+          (root.getMessage()==null?"":": "+root.getMessage());
+        return reason.length()>260?reason.substring(0,260):reason;
+    }
     private void completeAndAnalyze(){
+        if(completingSession)return;
         saveDraft();
         JSONObject history=document.optJSONObject("history");
         if(history==null){history=new JSONObject();set(document,"history",history);}
         set(history,date,true);
-        JSONObject s=session();
-        set(s,"report",fallback());set(s,"aiReport",false);persist();render();
+        JSONObject entry=session();
         if(!AiEngine.available(this)){
-            notifyUser(tr("Per una valutazione generativa, importa il modello IA nelle impostazioni.",
-              "Import a local AI model in Settings for a generated reflection.",
-              "Importa un modelo IA local en Ajustes para generar la reflexión."));
-            return;
+            set(entry,"reportStatus","missing");
+            set(entry,"aiError",tr("Modello Qwen3 non ancora pronto. Puoi attivarlo qui sotto.",
+              "Qwen3 model not yet ready. Activate it below.",
+              "El modelo Qwen3 no está preparado. Actívalo abajo."));
+            set(entry,"report",fallback());
+            set(entry,"aiReport",false);
+            persist();render();return;
         }
-        String d=document.optString("diagnosis",""),g=document.optString("goals","");
+        completingSession=true;
+        final String analysisDate=date;
+        set(entry,"reportStatus","generating");
+        set(entry,"report","");
+        set(entry,"aiError","");
+        set(entry,"aiReport",false);
+        persist();render();
+        String diagnosis=document.optString("diagnosis",""),goals=document.optString("goals","");
         String diary=diaryText();
-        notifyUser(tr("Analisi IA offline in corso…","Offline AI reflection…","Análisis IA sin conexión…"));
-        AiEngine.report(this,lang,d,g,diary,(report,error)->{
+        AiEngine.report(this,lang,diagnosis,goals,diary,(response,error)->{
+            completingSession=false;
             if(isFinishing())return;
-            if(error!=null||report==null||report.trim().isEmpty()){
-                notifyUser(tr("IA non disponibile: mantenuta la riflessione guidata.",
-                   "AI unavailable: guided reflection kept.","IA no disponible: se mantiene la reflexión guiada."));
-                return;
+            JSONObject sessions=document.optJSONObject("sessions");
+            JSONObject target=sessions==null?null:sessions.optJSONObject(analysisDate);
+            if(target==null)return;
+            String cleaned=response==null?"":response.replaceAll("(?s)<think>.*?</think>","").trim();
+            if(error!=null||cleaned.isEmpty()){
+                set(target,"reportStatus","error");
+                set(target,"aiReport",false);
+                set(target,"aiError",error!=null?shortAiError(error):
+                    tr("Il modello non ha restituito testo utilizzabile.",
+                       "The model returned no usable text.",
+                       "El modelo no devolvió texto utilizable."));
+                set(target,"report",fallback());
+            }else{
+                set(target,"report",cleaned);
+                set(target,"reportStatus","done");
+                set(target,"aiReport",true);
+                set(target,"aiError","");
             }
-            set(session(),"report",report.trim());set(session(),"aiReport",true);persist();
-            if(step==6)render();
-            AiEngine.encouragement(this,lang,d,g,(phrase,pError)->{
+            persist();if(step==6)render();
+            if(!target.optBoolean("aiReport",false))return;
+            AiEngine.encouragement(this,lang,diagnosis,goals,(phrase,pError)->{
+                if(isFinishing())return;
                 if(pError==null&&phrase!=null&&!phrase.trim().isEmpty()&&phrase.length()<240){
-                    set(document,"splashPhrase",phrase.trim());
-                    set(document,"splashDiagnosis",d);persist();
+                    String message=phrase.replaceAll("(?s)<think>.*?</think>","").trim();
+                    if(!message.isEmpty()){
+                        set(document,"splashPhrase",message);
+                        set(document,"splashDiagnosis",diagnosis);persist();
+                    }
                 }
             });
         });
