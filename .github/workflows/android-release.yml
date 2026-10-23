@@ -1,7 +1,7 @@
 name: Android test release
 on:
   push:
-    branches: [main, feature/android-cbt-voice-ai]
+    branches: [main, feature/android-cbt-voice-ai, feature/modern-ui-integrated-qwen3]
   workflow_dispatch:
 jobs:
   android:
@@ -22,10 +22,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
-      - name: Build signed TEST release
-        run: gradle --no-daemon :app:assembleRelease
+      - name: Assemble TEST release
+        run: gradle --no-daemon :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: Diario-CBT-0.1-test-release
+          name: Diario-CBT-v0.2-test-release
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error

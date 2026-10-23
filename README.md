@@ -1,17 +1,45 @@
-# Diario-CBT — Android nativo
+# Diario CBT — Android
+### v0.2.0 — Splash arcade, interfaccia moderna e Qwen3 offline integrato
 
-Prototipo **0.1.0**: diario CBT guidato, navigazione Avanti/Indietro e swipe, monitoraggio emotivo, note e registrazione audio, domande lette con TTS, riconoscimento **solo locale** quando il dispositivo lo supporta, profilo clinico facoltativo, valutazione 0–10 non diagnostica, streak e suggerimenti pratici.
+Applicazione Android nativa per **riflessioni CBT guidate** in italiano, inglese e spagnolo. Il progetto fornisce un supporto al diario, non una diagnosi o un trattamento medico.
 
-**Lingue:** italiano, inglese, spagnolo.
+## Funzionalità
+- Percorso in 7 schermate con barra avanzamento e **transizione orizzontale animata** (Avanti/Indietro e swipe).
+- Interfaccia scura con gradienti, moduli arrotondati, indicatori neon.
+- Splash screen con **cervello originale disegnato in vettoriale che ruota in 3D**, logo CBT arcade originale e frase motivazionale. Non usa risorse grafiche di altri giochi.
+- Testo, riconoscimento vocale **offline quando supportato**, registrazione audio locale, lettura ad alta voce sia delle domande sia delle risposte e del riepilogo.
+- Riepilogo con indicatore 0–10 sulla compilazione degli esercizi, non sulla salute mentale, e streak.
+- Diagnosi clinica **autodichiarata, facoltativa** usata come solo contesto per suggerimenti pratici di IA.
+- Promemoria locale quotidiano; popup a schermo intero solo se Android lo consente.
+- Testi del diario cifrati con Android Keystore/AES-GCM; backup automatico disabilitato. **Audio registrato ancora in chiaro nello spazio privato dell'app**.
 
-**IA generativa on-device:** runtime integrato MediaPipe LLM Inference. Per usare un modello linguistico reale occorre scaricare/importare dall'app un file modello `.task` *compatibile* e di licenza appropriata. Il repository **non contiene pesi** (sono centinaia di MB/GB): senza di essi l'app propone una scheda CBT deterministica, identificata come **senza IA generativa**. Il pulsante «Importa modello IA» copia il modello in una directory privata; l'analisi non usa servizi remoti. La generazione richiede un dispositivo supportato: verificare in particolare Pixel 7 Pro (l'API è ottimizzata per dispositivi più recenti). Una frase incoraggiante **generata dall'IA** sulla base della diagnosi dichiarata viene memorizzata a fine sessione, e visualizzata allo splash successivo. Prima del primo utilizzo IA viene usato un testo motivazionale **predefinito**, non falsamente attribuito a un modello.
+## IA generativa integrata: Qwen3 0.6B
+Questa versione non richiede che l'utente ricerchi o importi manualmente un file modello. Il runtime **LiteRT-LM** è integrato e al primo avvio una finestra offre il download con un solo tocco.
 
-**Privacy:** testo e profilo cifrati AES-GCM con chiave Android Keystore in spazio privato; audio in file privati **non ancora cifrati**. Backup automatico disabilitato. Non aggiungere analytics o servizi esterni senza consenso.
+- Modello: **Qwen3-0.6B**, LiteRT Community, licenza **Apache-2.0**.
+- Fonte: https://huggingface.co/litert-community/Qwen3-0.6B
+- File: `Qwen3-0.6B.litertlm` (613.722.264 byte; circa 586 MiB).
+- SHA-256 atteso: `c5f39b4191926786c3e6668b62af4d6eb15248dfc7a5348252a9b406f33f2108`.
+- Download in memoria privata dell'app, con possibilità di riprendere download incompleti e verifica SHA-256 prima dell'uso.
+- L'IA elabora il diario **in locale** usando GPU e fallback CPU. Non vengono effettuate chiamate a servizi IA remoti né caricati diari sul web.
+- **Il modello non è dentro l'APK**: per la dimensione di oltre mezzo GB viene scaricato automaticamente alla prima attivazione su consenso dell'utente. Il motore resta pronto per gli utilizzi offline successivi.
+- Senza modello, si usa solo una riflessione deterministica **etichettata senza IA generativa**; l'utente può attivare Qwen3 in seguito dalle impostazioni.
+- La compatibilità e le prestazioni effettive su **Pixel 7 Pro Android 17** vanno ancora verificate su dispositivo; la build automatica verifica la compilazione, non l'inferenza reale.
 
-**Promemoria:** notifica locale a orario configurabile, con heads-up e richiesta *facoltativa* per apertura a schermo intero. Android 14+ riserva full-screen intent ai casi consentiti e approvati dall'utente; una normale app diario non può garantire popup automatici. Ricorrenze con AlarmManager sono approssimative. La schermata permette «Inizia», «Tra 15 minuti», «Salta oggi».
+Il motore analizza i pensieri automatici, propone una prospettiva realistica e due piccoli passi concreti sotto l'osservazione finale. Un'altra richiesta genera una frase motivazionale per la splash successiva, senza diagnosi nuove o etichette.
 
-**Punteggio:** è un indicatore di completamento di esercizi CBT, non una misura diagnostica, del benessere o del valore della persona. Le risposte e le diagnosi sono informazioni sensibili: evitare GitHub issues contenenti diari reali.
+## Build
+Da GitHub: `Actions → Android test release → Artifacts` (ZIP contenente l'APK). Oppure in Android Studio: JDK 17, SDK 36 e Gradle 8.13.
 
-**Compilazione:** Android Studio con JDK 17, SDK 36 o GitHub Actions → *Android test release*; l'APK ottenuto è firmato **con chiave di debug per i test**, anche se il task si chiama `assembleRelease`. Non è una release di distribuzione. Il progetto non include Gradle wrapper, ma il workflow installa Gradle 8.13. L'esecuzione su dispositivo non è ancora certificata.
+**Nota APK:** viene compilato con `assembleRelease`, ma è **firmato con chiave di debug per test**, non una release pubblicabile.
 
-**Nota:** le osservazioni di IA non sostituiscono pareri clinici o psicoterapia; la diagnosi è inserita dall'utente, mai dedotta dall'app.
+## Privacy e sicurezza
+- Diagnosi autodichiarate usate soltanto come contesto opzionale.
+- Nessun indicatore CBT è una valutazione clinica o una misura del valore della persona.
+- Media registrati non cifrati: non utilizzare informazioni vocali sensibili in un ambiente non fidato.
+- Pesi IA scaricati solo da Hugging Face, non viene trasferito alcun contenuto del diario.
+- Richiede un download importante (~614 MB), Wi-Fi consigliato e spazio di archiviazione sufficiente (durante il download fino al doppio per cache parziali).
+- Il modello **può commettere errori**: i consigli sono da valutare criticamente. In situazioni urgenti contattare servizi di emergenza o un professionista.
+
+## Versione
+v0.2.0 prototipo. Modifiche sviluppate nel branch `feature/modern-ui-integrated-qwen3`.
