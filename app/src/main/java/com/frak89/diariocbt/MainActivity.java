@@ -377,11 +377,18 @@ public class MainActivity extends Activity {
         content.addView(label(date,14,SUB,false));space(content,24);
 
         JSONObject entry=session();
+        // Reconcile legacy v0.2.8 snapshots: if the page 7 score is 10/10
+        // but completionScore was captured earlier as 0, repair it in place.
+        int liveScore=score();
+        if(entry.optInt("completionScore",-1)!=liveScore){
+            set(entry,"completionScore",liveScore);
+            persist();
+        }
         LinearLayout stats=row();
         LinearLayout scoreCard=col();scoreCard.setPadding(d(16),d(17),d(12),d(15));
         scoreCard.setBackground(bg(CARD,0xff374568));
         scoreCard.addView(label(tr("PUNTEGGIO CBT","CBT SCORE","PUNTUACIÓN CBT"),12,SUB,true));
-        scoreCard.addView(label(entry.optInt("completionScore",score())+" / 10",29,GOLD,true));
+        scoreCard.addView(label(liveScore+" / 10",29,GOLD,true));
         stats.addView(scoreCard,new LinearLayout.LayoutParams(0,-2,1));
         stats.addView(new View(this),new LinearLayout.LayoutParams(d(8),1));
         LinearLayout streakCard=col();streakCard.setPadding(d(16),d(17),d(12),d(15));
@@ -428,9 +435,14 @@ public class MainActivity extends Activity {
             }
             if(!"done".equals(status)){
                 String reason=entry.optString("aiError","");
-                if(!reason.isEmpty()){
+                if(!reason.isEmpty()||"missing".equals(status)){
+                    String guidance=AiEngine.reportAvailable(this)&&"missing".equals(status)?
+                        tr("Ora l'IA è configurata: premi Genera analisi per ottenere il verdetto.",
+                            "AI is now configured: tap Generate analysis to obtain your reflection.",
+                            "La IA ya está configurada: pulsa Generar análisis para obtener la reflexión."):
+                        AiEngine.reportAvailable(this)?reason:aiSetupExplanation();
                     verdict.addView(label(tr("IA non disponibile: ","AI unavailable: ",
-                        "IA no disponible: ")+reason,13,0xffffbd9b,false));
+                        "IA no disponible: ")+guidance,13,0xffffbd9b,false));
                     space(verdict,9);
                 }
             }
@@ -441,9 +453,13 @@ public class MainActivity extends Activity {
             hear.setOnClickListener(v->speak(narration));
             verdict.addView(hear);
             space(verdict,11);
-            Button regenerate=button(tr("↻ Rigenera analisi IA","↻ Regenerate AI reflection",
-                "↻ Regenerar observación IA"),false);
-            regenerate.setOnClickListener(v->regenerateWithConfirmation());
+            boolean hasGeneratedAi=entry.optBoolean("aiReport",false);
+            Button regenerate=button(hasGeneratedAi?
+                 tr("↻ Rigenera analisi IA","↻ Regenerate AI reflection","↻ Regenerar análisis IA"):
+                 AiEngine.reportAvailable(this)?
+                 tr("✦ Genera analisi IA","✦ Generate AI reflection","✦ Generar análisis IA"):
+                 tr("⚙ Configura IA online Groq","⚙ Configure Groq online AI","⚙ Configurar IA Groq"),false);
+            regenerate.setOnClickListener(v->requestAnalysis());
             verdict.addView(regenerate);
         }
         content.addView(verdict);space(content,20);
@@ -491,6 +507,11 @@ public class MainActivity extends Activity {
         }else{
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
                 String detail=entry.optString("aiError","");
+                if(!AiEngine.reportAvailable(this))detail=aiSetupExplanation();
+                else if("missing".equals(status))detail=tr(
+                    "Groq ora è pronto. Premi Genera analisi IA.",
+                    "Groq is ready. Tap Generate AI reflection.",
+                    "Groq está listo. Pulsa Generar análisis IA.");
                 TextView warning=label(tr("IA non completata: ","AI did not complete: ",
                     "La IA no terminó: ")+detail,14,0xffffbd9b,false);
                 panel.addView(warning);space(panel,14);
@@ -507,12 +528,10 @@ public class MainActivity extends Activity {
             }
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
                 Button retry=button(AiEngine.reportAvailable(this)?
-                   tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
-                   tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
-                retry.setOnClickListener(v->{
-                    if(AiEngine.reportAvailable(this))regenerateWithConfirmation();
-                    else downloadBuiltInModel();
-                });panel.addView(retry);space(panel,12);
+                   tr("Genera analisi IA","Generate AI reflection","Generar análisis IA"):
+                   tr("Configura IA Groq o Qwen3","Configure Groq or Qwen3","Configurar Groq o Qwen3"),true);
+                retry.setOnClickListener(v->requestAnalysis());
+                panel.addView(retry);space(panel,12);
             }
         }
         panel.addView(label(tr("Non è una diagnosi né una valutazione medica.",
@@ -520,10 +539,11 @@ public class MainActivity extends Activity {
           "No es un diagnóstico ni una valoración médica."),12,SUB,false));
     }
     private int score(){
-        JSONObject s=session();int n=0;
-        for(String k:new String[]{"p2_0","p2_1","p3_0","p3_1","p4_1","p5_0"})
-            if(!s.optString(k,"").trim().isEmpty())n++;
-        return (int)Math.round(n*10.0/6.0);
+        JSONObject current=session();
+        java.util.HashMap<String,String> answers=new java.util.HashMap<>();
+        for(String key:ProgressMetrics.SCORED_FIELDS)
+            answers.put(key,current.optString(key,""));
+        return ProgressMetrics.score(answers);
     }
     private int streak(){
         JSONObject hist=document.optJSONObject("history");if(hist==null)return 0;
@@ -561,11 +581,19 @@ public class MainActivity extends Activity {
         JSONObject entry=session();
         JSONObject history=document.optJSONObject("history");
         if(history==null){history=new JSONObject();set(document,"history",history);}
-        if(!history.has(date))set(history,date,true);
-        if(!entry.has("completedOn"))set(entry,"completedOn",date);
-        if(!entry.has("completionScore"))set(entry,"completionScore",score());
-        if(!entry.has("completionStreak"))set(entry,"completionStreak",streak());
-        persist();
+        boolean dirty=false;
+        if(!history.has(date)){set(history,date,true);dirty=true;}
+        if(!entry.has("completedOn")){set(entry,"completedOn",date);dirty=true;}
+        // The old code froze a 0/10 score at first finish. If the user edits
+        // answers later, keep the score synchronized with those actual answers.
+        int liveScore=score();
+        if(entry.optInt("completionScore",-1)!=liveScore){
+            set(entry,"completionScore",liveScore);dirty=true;
+        }
+        if(!entry.has("completionStreak")){
+            set(entry,"completionStreak",streak());dirty=true;
+        }
+        if(dirty)persist();
     }
     private void finishSession(){
         if(recorder!=null)stopRecording();
@@ -615,6 +643,38 @@ public class MainActivity extends Activity {
             scrollFieldIntoView(field);
         }
     }
+    private String aiSetupExplanation(){
+        android.content.SharedPreferences options=getSharedPreferences("options",0);
+        String groqKey=document.optString("groqApiKey","").trim();
+        boolean permission=options.getBoolean("groq_ai_consent",false);
+        if(groqKey.startsWith("gsk_") && !permission){
+            return tr("Groq è configurato per la voce, ma l'analisi del diario richiede un consenso distinto in Impostazioni → Osservazione IA online.",
+                "Groq is configured, but journal analysis needs separate consent in Settings → Online AI Reflection.",
+                "Groq está configurado, pero analizar el diario requiere otro consentimiento en Ajustes → IA online.");
+        }
+        if(!groqKey.startsWith("gsk_")){
+            return tr("Per il verdetto IA online inserisci una chiave Groq valida e attiva il consenso specifico all'analisi del diario.",
+                "For online AI reflections, add a valid Groq key and enable separate journal-analysis consent.",
+                "Para el análisis IA online, añade una clave Groq válida y activa el consentimiento del diario.");
+        }
+        if(!permission){
+            return tr("L'analisi Groq è disattivata per privacy. Abilitala esplicitamente nelle impostazioni.",
+                "Groq analysis is off for privacy. Enable it explicitly in Settings.",
+                "El análisis Groq está desactivado por privacidad. Actívalo explícitamente en Ajustes.");
+        }
+        return tr("Non è attivo nessun modello IA. Verifica Groq nelle impostazioni oppure prepara Qwen3 offline.",
+            "No AI model is active. Check Groq Settings or prepare offline Qwen3.",
+            "No hay un modelo IA activo. Revisa Groq o prepara Qwen3 offline.");
+    }
+    private void requestAnalysis(){
+        if(completingSession)return;
+        if(AiEngine.reportAvailable(this)){
+            if(session().optBoolean("aiReport",false))regenerateWithConfirmation();
+            else completeAndAnalyze();
+        }else{
+            showSettings();
+        }
+    }
     private String shortAiError(Throwable error){
         Throwable root=error;int tries=0;
         while(root!=null&&root.getCause()!=null&&tries++<8)root=root.getCause();
@@ -629,9 +689,7 @@ public class MainActivity extends Activity {
         JSONObject entry=session();
         if(!AiEngine.reportAvailable(this)){
             set(entry,"reportStatus","missing");
-            set(entry,"aiError",tr("Modello Qwen3 non ancora pronto. Puoi attivarlo qui sotto.",
-              "Qwen3 model not yet ready. Activate it below.",
-              "El modelo Qwen3 no está preparado. Actívalo abajo."));
+            set(entry,"aiError",aiSetupExplanation());
             set(entry,"report",fallback());
             set(entry,"aiReport",false);
             persist();render();return;
