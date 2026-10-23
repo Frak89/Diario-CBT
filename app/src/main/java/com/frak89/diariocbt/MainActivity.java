@@ -510,7 +510,7 @@ public class MainActivity extends Activity {
                    tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
                    tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
                 retry.setOnClickListener(v->{
-                    if(AiEngine.reportAvailable(this))completeAndAnalyze();
+                    if(AiEngine.reportAvailable(this))regenerateWithConfirmation();
                     else downloadBuiltInModel();
                 });panel.addView(retry);space(panel,12);
             }
@@ -625,9 +625,7 @@ public class MainActivity extends Activity {
     private void completeAndAnalyze(){
         if(completingSession)return;
         saveDraft();
-        JSONObject history=document.optJSONObject("history");
-        if(history==null){history=new JSONObject();set(document,"history",history);}
-        set(history,date,true);
+        markDayCompleted();
         JSONObject entry=session();
         if(!AiEngine.reportAvailable(this)){
             set(entry,"reportStatus","missing");
@@ -660,7 +658,7 @@ public class MainActivity extends Activity {
                 "La generación tarda demasiado en este dispositivo. Prueba la IA desde Ajustes."));
             set(inProgress,"report",fallback());
             set(inProgress,"aiReport",false);
-            persist();if(step==6)render();
+            persist();if(summaryVisible||step==6)render();
         },180000);
         AiEngine.report(this,lang,diagnosis,goals,diary,(response,error)->{
             if(!"generating".equals(entry.optString("reportStatus","")))return;
@@ -684,15 +682,18 @@ public class MainActivity extends Activity {
                 set(target,"aiReport",true);
                 set(target,"aiError","");
             }
-            persist();if(step==6)render();
+            persist();if(summaryVisible||step==6)render();
             if(!target.optBoolean("aiReport",false))return;
-            AiEngine.encouragement(this,lang,diagnosis,goals,(phrase,pError)->{
+            AiEngine.encouragement(this,lang,diagnosis,goals,diary,(phrase,pError)->{
                 if(isFinishing())return;
                 if(pError==null&&phrase!=null&&!phrase.trim().isEmpty()&&phrase.length()<240){
                     String message=phrase.replaceAll("(?s)<think>.*?</think>","").trim();
                     if(!message.isEmpty()){
+                        set(target,"encouragement",message);
                         set(document,"splashPhrase",message);
-                        set(document,"splashDiagnosis",diagnosis);persist();
+                        set(document,"splashDiagnosis",diagnosis);
+                        persist();
+                        if(summaryVisible)render();
                     }
                 }
             });
@@ -709,8 +710,15 @@ public class MainActivity extends Activity {
         }
     }
     private void speak(String text){
-        if(tts==null)return;configureVoice();
-        tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,"question");
+        if(tts==null)return;
+        configureVoice();
+        java.util.List<String> paragraphs=SpeechText.chunks(text,1500);
+        int index=0;
+        for(String item:paragraphs){
+            if(item.isEmpty())continue;
+            tts.speak(item,index==0?TextToSpeech.QUEUE_FLUSH:TextToSpeech.QUEUE_ADD,
+                null,"cbt-"+System.nanoTime()+"-"+(index++));
+        }
     }
     private boolean micPermission(){
         if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)return true;
@@ -929,7 +937,7 @@ public class MainActivity extends Activity {
             }
             if(finishAfterTranscript){
                 finishAfterTranscript=false;
-                completeAndAnalyze();
+                finishSession();
             }
         });
     }
