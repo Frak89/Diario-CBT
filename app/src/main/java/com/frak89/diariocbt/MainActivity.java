@@ -446,7 +446,7 @@ public class MainActivity extends Activity {
                     space(verdict,9);
                 }
             }
-            verdict.addView(label(report.isEmpty()?fallback():report,16,FG,false));
+            verdict.addView(label(SpeechText.clean(report.isEmpty()?fallback():report),16,FG,false));
             space(verdict,13);
             Button hear=button("🔊 "+tr("Ascolta il verdetto","Listen to reflection","Escuchar observación"),false);
             final String narration=report.isEmpty()?fallback():report;
@@ -463,14 +463,31 @@ public class MainActivity extends Activity {
             verdict.addView(regenerate);
         }
         content.addView(verdict);space(content,20);
-        Button review=button("← "+tr("Rivedi o modifica il diario",
-            "Review or edit your journal","Revisar o editar el diario"),true);
-        review.setOnClickListener(v->{summaryVisible=false;step=0;render();});
-        content.addView(review,new LinearLayout.LayoutParams(-1,d(57)));
+        boolean alreadyRegistered=entry.optBoolean("diaryRegistered",false);
+        if(alreadyRegistered){
+            content.addView(label("✓ "+tr("Diario registrato e cifrato sul dispositivo",
+                "Journal saved and encrypted on this device",
+                "Diario guardado y cifrado en este dispositivo"),13,CYAN,true));
+            space(content,10);
+        }
+        Button finish=button(alreadyRegistered?
+            tr("✓ Termina e chiudi il diario","✓ Finish and close journal",
+                "✓ Terminar y cerrar diario"):
+            tr("✓ Termina diario e registra","✓ Finish and save journal",
+                "✓ Terminar diario y guardar"),true);
+        finish.setOnClickListener(v->finishAndRegisterJournal());
+        content.addView(finish,new LinearLayout.LayoutParams(-1,d(58)));
         space(content,12);
-        content.addView(label(tr("Riepilogo e progressi sono salvati per la giornata.",
-            "Summary and progress are saved for today.",
-            "El resumen y el progreso están guardados para hoy."),12,SUB,false));
+        Button review=button("← "+tr("Rivedi o modifica il diario",
+            "Review or edit your journal","Revisar o editar el diario"),false);
+        review.setOnClickListener(v->{summaryVisible=false;step=0;render();});
+        content.addView(review,new LinearLayout.LayoutParams(-1,d(55)));
+        space(content,14);
+        content.addView(label(tr(
+            "Le risposte, il punteggio, lo streak, il verdetto e l'incoraggiamento rimangono nel diario cifrato.",
+            "Your answers, score, streak, AI reflection and encouragement remain in your encrypted journal.",
+            "Las respuestas, puntuación, racha, observación e incentivo quedan en el diario cifrado."),
+            12,SUB,false));
         building=false;
     }
     private void showFinal(LinearLayout panel) {
@@ -516,10 +533,10 @@ public class MainActivity extends Activity {
                     "La IA no terminó: ")+detail,14,0xffffbd9b,false);
                 panel.addView(warning);space(panel,14);
             }
-            TextView observation=label(report.isEmpty()?
+            TextView observation=label(SpeechText.clean(report.isEmpty()?
                tr("Premi «Termina» per generare l'osservazione.",
                   "Tap Done to generate your reflection.",
-                  "Pulsa Terminar para generar la observación."):report,16,FG,false);
+                  "Pulsa Terminar para generar la observación."):report),16,FG,false);
             panel.addView(observation);space(panel,14);
             if(!report.isEmpty()){
                 Button hear=button("🔊 "+tr("Ascolta l'osservazione","Listen to reflection","Escuchar observación"),false);
@@ -576,6 +593,65 @@ public class MainActivity extends Activity {
           tr("PROSSIMI PASSI: Prova questa azione concreta: ",
              "NEXT STEPS: Try this concrete action: ","PRÓXIMOS PASOS: Prueba esta acción concreta: ")+action;
         return t+"\n\n"+a+"\n\n"+next;
+    }
+    /** Explicit end-of-session action. Do not relaunch AI or pretend a failed encrypted write worked. */
+    private void finishAndRegisterJournal(){
+        if(recorder!=null){
+            stopRecording();
+        }
+        if(transcriptRunning || completingSession
+             || "generating".equals(session().optString("reportStatus",""))){
+            new AlertDialog.Builder(this)
+                .setTitle(tr("Elaborazione in corso","Processing in progress",
+                    "Procesamiento en curso"))
+                .setMessage(tr(
+                    "La trascrizione o l'osservazione IA sta terminando. Potrai registrare definitivamente il diario appena conclusa, senza perdere il risultato.",
+                    "Transcription or AI reflection is still processing. Finish and save once it has completed so the result is retained.",
+                    "La transcripción o la observación IA sigue procesándose. Guarda el diario cuando termine para conservar el resultado."))
+                .setPositiveButton("OK",null).show();
+            return;
+        }
+        saveDraft();
+        markDayCompleted();
+        JSONObject current=session();
+        if(!current.optBoolean("diaryRegistered",false)){
+            set(current,"diaryRegistered",true);
+            set(current,"registeredAt",java.time.Instant.now().toString());
+        }
+        set(current,"completionScore",score());
+        set(current,"completionStreak",streak());
+        try{
+            // Verify the encrypted journal is actually written before saying it is saved.
+            SecureStore.write(this,document);
+        }catch(Exception error){
+            set(current,"diaryRegistered",false);
+            new AlertDialog.Builder(this)
+                .setTitle(tr("Salvataggio non riuscito","Save unsuccessful",
+                    "No se pudo guardar"))
+                .setMessage(tr(
+                    "Il diario non è stato confermato nell'archivio cifrato. Resta aperto, così puoi riprovare senza perdere le risposte.",
+                    "The encrypted journal write was not confirmed. The app will stay open so you can retry without losing your answers.",
+                    "No se confirmó el guardado cifrado. El diario queda abierto para volver a intentarlo.")+
+                    "\n\n"+error.getMessage())
+                .setPositiveButton("OK",null).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("✓ "+tr("Diario registrato","Journal saved","Diario guardado"))
+            .setMessage(tr(
+                "La giornata è salvata nell'archivio cifrato. Punteggio CBT: ",
+                "Today's journal is encrypted and saved. CBT score: ",
+                "El diario de hoy está cifrado y guardado. Puntuación CBT: ")
+                +score()+"/10\n"+
+                tr("Giorni consecutivi: ","Consecutive days: ","Días consecutivos: ")+streak()+" 🔥\n\n"+
+                tr("Potrai riaprire il diario di oggi senza ripetere l'analisi IA.",
+                   "You can reopen today's entry without running AI analysis again.",
+                   "Podrás reabrir el diario de hoy sin ejecutar de nuevo el análisis IA."))
+            .setNegativeButton(tr("Resta nel riepilogo","Stay in summary",
+                "Quedar en el resumen"),(dialog,which)->render())
+            .setPositiveButton(tr("Chiudi diario","Close journal",
+                "Cerrar diario"),(dialog,which)->finish())
+            .show();
     }
     private void markDayCompleted(){
         JSONObject entry=session();
