@@ -39,6 +39,8 @@ public class MainActivity extends Activity {
     private MediaRecorder recorder;
     private MediaPlayer player;
     private String recordingKey;
+    private Button activeRecordingButton;
+    private android.animation.ObjectAnimator recordingPulse;
     private float downX,downY;
     private boolean building;
     private int d(float px) {return (int)(px*getResources().getDisplayMetrics().density+.5f);}
@@ -102,6 +104,7 @@ public class MainActivity extends Activity {
         if(target<0||target>6||changingPage||target==step)return;
         changingPage=true;
         final int direction=target>step?1:-1;
+        if(recorder!=null)stopRecording();
         saveDraft();
         ViewGroup host=findViewById(android.R.id.content);
         View previous=host.getChildCount()>0?host.getChildAt(0):null;
@@ -195,8 +198,7 @@ public class MainActivity extends Activity {
         if(step>0) foot.addView(new View(this),new LinearLayout.LayoutParams(d(10),1));
         Button next=button(step==6?tr("Termina","Done","Terminar"):tr("Avanti →","Next →","Siguiente →"),true);
         foot.addView(next,new LinearLayout.LayoutParams(0,d(52),1));
-        next.setOnClickListener(v->{if(step<6)navigate(step+1);else notifyUser(tr(
-           "La tua sessione è salvata.","Your session is saved.","Tu sesión está guardada."));});
+        next.setOnClickListener(v->{if(step<6)navigate(step+1);else finishSession();});
         layout.addView(foot);
         if(step<6){
             space(layout,10);
@@ -207,22 +209,23 @@ public class MainActivity extends Activity {
         building=false;
     }
     private void addQuestion(LinearLayout card,String question,String key,int qIndex){
+        if(step==1 || (step==4 && qIndex==2)){
+            card.addView(RatingButtons.create(this,question,session().optString(key,""),step==1,lang,
+                score->{set(session(),key,Integer.toString(score));persist();},
+                ()->speak(question)));
+            space(card,14);return;
+        }
         TextView title=label(question,16,FG,true);card.addView(title);space(card,6);
         EditText answer=new EditText(this);
         answer.setTextSize(16);answer.setTextColor(FG);answer.setHintTextColor(0xff7e90aa);
         answer.setBackground(bg(BACK,0xff354362));
         answer.setPadding(d(12),d(12),d(12),d(12));
         answer.setGravity(Gravity.TOP|Gravity.START);
-        if(step==1){
-            answer.setSingleLine(true);answer.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-            answer.setHint("0–10");
-        } else {
-            answer.setMinLines(2);answer.setMaxLines(6);
-            answer.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|
-                android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
-            answer.setHint(tr("Scrivi qui oppure usa il microfono…","Type or use the microphone…",
-              "Escribe aquí o usa el micrófono…"));
-        }
+        answer.setMinLines(2);answer.setMaxLines(6);
+        answer.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        answer.setHint(tr("Scrivi qui oppure usa il microfono…","Type or use the microphone…",
+          "Escribe aquí o usa el micrófono…"));
         answer.setText(session().optString(key,""));
         currentFields.add(answer);currentKeys.add(key);
         card.addView(answer,new LinearLayout.LayoutParams(-1,-2));space(card,6);
@@ -242,6 +245,10 @@ public class MainActivity extends Activity {
         rec.setOnClickListener(v->toggleRecord(key,rec));tools.addView(rec,new LinearLayout.LayoutParams(0,d(45),1));
         Button play=button("▶",false);play.setContentDescription(tr("Riascolta risposta","Replay recording","Reproducir grabación"));
         play.setOnClickListener(v->playRecording(key));tools.addView(play,new LinearLayout.LayoutParams(0,d(45),1));
+        Button transcribe=button("✍",false);
+        transcribe.setContentDescription(tr("Trascrivi audio registrato","Transcribe recorded audio","Transcribir audio grabado"));
+        transcribe.setOnClickListener(v->transcribeAudio(key,answer));
+        tools.addView(transcribe,new LinearLayout.LayoutParams(0,d(45),1));
         Button readAnswer=button("🔉",false);
         readAnswer.setContentDescription(tr("Ascolta la risposta","Read answer aloud","Escuchar respuesta"));
         readAnswer.setOnClickListener(v->speak(answer.getText().toString()));
@@ -256,9 +263,7 @@ public class MainActivity extends Activity {
              "Measures completed reflection tasks, not mental health or personal worth.",
              "Mide ejercicios completados, no la salud mental ni el valor personal."),
               13,SUB,false);panel.addView(explain);space(panel,18);
-        Button generate=button(tr("Concludi e analizza","Complete and reflect","Terminar y analizar"),true);
-        generate.setOnClickListener(v->completeAndAnalyze());panel.addView(generate);
-        space(panel,18);
+        space(panel,8);
         String report=s.optString("report","");
         boolean ai=s.optBoolean("aiReport",false);
         TextView title=label(ai?tr("OSSERVAZIONE IA LOCALE","LOCAL AI OBSERVATION","OBSERVACIÓN IA LOCAL"):
@@ -313,6 +318,10 @@ public class MainActivity extends Activity {
           tr("PROSSIMI PASSI: Prova questa azione concreta: ",
              "NEXT STEPS: Try this concrete action: ","PRÓXIMOS PASOS: Prueba esta acción concreta: ")+action;
         return t+"\n\n"+a+"\n\n"+next;
+    }
+    private void finishSession(){
+        if(recorder!=null)stopRecording();
+        completeAndAnalyze();
     }
     private void completeAndAnalyze(){
         saveDraft();
@@ -402,11 +411,35 @@ public class MainActivity extends Activity {
     }
     private File audioFile(String key){File dir=new File(getFilesDir(),"audio");dir.mkdirs();
       return new File(dir,date+"_"+key+".m4a");}
+    private void recordingVisual(Button btn,boolean isRecording){
+        btn.setText(isRecording?"⏹ REC":"⏺");
+        btn.setTextSize(isRecording?12:14);
+        btn.setTextColor(FG);
+        btn.setBackground(bg(isRecording?0xffe32f54:CARD,
+                             isRecording?0xffffb9cc:0xff35405e));
+        btn.setContentDescription(isRecording?
+          tr("Registrazione in corso: premi per fermare",
+             "Recording: tap to stop","Grabando: toca para detener"):
+          tr("Registra voce","Record voice","Grabar voz"));
+    }
+    private void stopRecording(){
+        if(recorder==null)return;
+        try{recorder.stop();}
+        catch(Exception ex){if(recordingKey!=null)audioFile(recordingKey).delete();}
+        finally{recorder.release();recorder=null;}
+        if(recordingPulse!=null){recordingPulse.cancel();recordingPulse=null;}
+        if(activeRecordingButton!=null){
+            recordingVisual(activeRecordingButton,false);
+            activeRecordingButton.setAlpha(1f);
+        }
+        activeRecordingButton=null;recordingKey=null;
+    }
     private void toggleRecord(String key,Button btn){
         if(recorder!=null){
-            try{recorder.stop();}catch(Exception ex){audioFile(recordingKey).delete();}
-            recorder.release();recorder=null;recordingKey=null;btn.setText("⏺");
-            notifyUser(tr("Registrazione terminata.","Recording saved.","Grabación guardada."));
+            stopRecording();
+            notifyUser(tr("Audio salvato. Premi ✍ per trascriverlo.",
+                "Recording saved. Tap ✍ to transcribe.",
+                "Audio guardado. Pulsa ✍ para transcribir."));
             return;
         }
         if(!micPermission())return;
@@ -418,9 +451,17 @@ public class MainActivity extends Activity {
             recorder.setAudioEncodingBitRate(64000);
             recorder.setAudioSamplingRate(16000);
             recorder.setOutputFile(audioFile(key).getAbsolutePath());
-            recorder.prepare();recorder.start();recordingKey=key;btn.setText("⏹");
+            recorder.prepare();recorder.start();
+            recordingKey=key;activeRecordingButton=btn;
+            recordingVisual(btn,true);
+            recordingPulse=android.animation.ObjectAnimator.ofFloat(btn,"alpha",1.0f,0.60f,1.0f);
+            recordingPulse.setDuration(900);
+            recordingPulse.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            recordingPulse.start();
         }catch(Exception ex){
             if(recorder!=null){recorder.release();recorder=null;}
+            recordingKey=null;activeRecordingButton=null;
+            recordingVisual(btn,false);
             notifyUser(tr("Impossibile registrare.","Could not record.","No se pudo grabar."));
         }
     }
