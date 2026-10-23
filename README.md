@@ -97,3 +97,16 @@ Development builds are signed with an ephemeral debug key; do not uninstall a pr
 - I test unitari Java controllano la pulizia di Markdown e i blocchi TTS; GitHub Actions ora esegue test e build.
 
 **Attenzione:** tutte le build sono APK di prova firmati in CI con chiave debug non stabile; non cancellare l'installazione corrente con dati importanti senza backup. Il test automatizzato non certifica il funzionamento dell'IA sul Pixel 7 Pro.
+
+
+## v0.2.9 — Archiviazione multi-sessione, calendario CBT, punteggio corretto, Groq
+- Risolto il disallineamento tra punteggio 10/10 nella pagina finale e 0/10 nel riepilogo: il risultato viene sempre calcolato dalle sei risposte effettive, e la fotografia storica errata viene aggiornata.
+- Quando Groq è configurato soltanto per trascrivere, l'analisi del diario resta disabilitata per privacy; l'errore esplicita il consenso aggiuntivo, con pulsante «Configura IA online Groq» invece di obbligare a Qwen3. Groq non riceve testo CBT/diagnosi senza opt-in separato.
+- «✓ Termina diario e registra» copia tutte le risposte e l'osservazione IA in `archive[YYYY-MM-DD][]`, conserva separatamente più registrazioni dello stesso giorno, salva il JSON con Android Keystore AES-GCM, e **solo dopo la riuscita** azzera i campi del modulo per la nuova compilazione. Un errore non cancella le risposte.
+- Le registrazioni audio M4A sono duplicate in una cartella privata dell'app per mantenere la storia anche con sessioni successive nello stesso giorno. Come nella versione precedente, **i file audio non sono cifrati individualmente**, benché restino nello storage privato dell'app.
+- Calendario accessibile dall'icona 📅 sull'interfaccia o dal riepilogo. I giorni con un diario completato hanno una marcatura evidente. Toccando il giorno, si visualizzano tutte le registrazioni di quella data, con testi integrali delle 6 fasi, audio disponibili, punteggio, streak, osservazione IA e incoraggiamento.
+- Lo storico di versioni precedenti viene visualizzato tramite le sessioni già presenti in `sessions` senza migrazione distruttiva.
+- Il testo mostrato nel riepilogo e nella pagina conclusiva non contiene gli asterischi Markdown dell'IA; il testo originale resta salvato.
+- Build di test v0.2.9 con test automatici; la compilazione non sostituisce un collaudo reale su Android 17.
+
+Non disinstallare una precedente app con dati importanti, perché gli APK di test GitHub Actions possono avere firme di debug non compatibili fra una release e l'altra.

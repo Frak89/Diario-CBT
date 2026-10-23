@@ -29,6 +29,10 @@ public class MainActivity extends Activity {
     private boolean changingPage=false;
     private boolean completingSession=false;
     private boolean summaryVisible=false;
+    private boolean calendarVisible=false;
+    private java.time.YearMonth calendarMonth=java.time.YearMonth.now();
+    private String archivedDay=null;
+    private int archivedPosition=0;
     private boolean transcriptRunning=false;
     private boolean finishAfterTranscript=false;
     private ScrollView activeScroll;
@@ -66,9 +70,17 @@ public class MainActivity extends Activity {
         if(state!=null){
             step=state.getInt("step",0);
             summaryVisible=state.getBoolean("summaryVisible",false);
+            calendarVisible=state.getBoolean("calendarVisible",false);
+            archivedDay=state.getString("archivedDay",null);
+            archivedPosition=state.getInt("archivedPosition",0);
+            String savedMonth=state.getString("calendarMonth","");
+            try{calendarMonth=java.time.YearMonth.parse(savedMonth);}
+            catch(Exception ignored){}
         } else {
-            JSONObject records=document.optJSONObject("history");
-            summaryVisible=records!=null&&records.has(date);
+            JSONObject current=session();
+            JSONObject days=document.optJSONObject("history");
+            // Registered entries are never reopened as editable drafts.
+            summaryVisible=days!=null&&days.has(date)&&hasDiaryContent(current);
         }
         JSONObject unfinished=session();
         if("generating".equals(unfinished.optString("reportStatus",""))){
@@ -86,6 +98,10 @@ public class MainActivity extends Activity {
         saveDraft();
         state.putInt("step",step);
         state.putBoolean("summaryVisible",summaryVisible);
+        state.putBoolean("calendarVisible",calendarVisible);
+        state.putString("archivedDay",archivedDay);
+        state.putInt("archivedPosition",archivedPosition);
+        state.putString("calendarMonth",calendarMonth.toString());
         super.onSaveInstanceState(state);
     }
     @Override protected void onPause(){saveDraft();super.onPause();}
@@ -177,6 +193,8 @@ public class MainActivity extends Activity {
     }
     private void render(){
         if(document==null)return;
+        if(archivedDay!=null){renderArchivedDetail();return;}
+        if(calendarVisible){renderCalendar();return;}
         if(summaryVisible){
             renderSummary();
             return;
@@ -192,6 +210,10 @@ public class MainActivity extends Activity {
         LinearLayout top=row();
         TextView brand=label("◈  DIARIO CBT",23,GOLD,true);
         top.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
+        Button calendar=button("📅",false);
+        calendar.setContentDescription(tr("Apri calendario diario","Open journal calendar","Abrir calendario diario"));
+        calendar.setOnClickListener(v->openCalendar());
+        top.addView(calendar);
         Button settings=button("⚙",false);settings.setOnClickListener(v->{saveDraft();showSettings();});
         top.addView(settings);layout.addView(top);space(layout,14);
         String[] titles=I18n.headings(lang);
@@ -377,11 +399,18 @@ public class MainActivity extends Activity {
         content.addView(label(date,14,SUB,false));space(content,24);
 
         JSONObject entry=session();
+        // Reconcile legacy v0.2.8 snapshots: if the page 7 score is 10/10
+        // but completionScore was captured earlier as 0, repair it in place.
+        int liveScore=score();
+        if(entry.optInt("completionScore",-1)!=liveScore){
+            set(entry,"completionScore",liveScore);
+            persist();
+        }
         LinearLayout stats=row();
         LinearLayout scoreCard=col();scoreCard.setPadding(d(16),d(17),d(12),d(15));
         scoreCard.setBackground(bg(CARD,0xff374568));
         scoreCard.addView(label(tr("PUNTEGGIO CBT","CBT SCORE","PUNTUACIÓN CBT"),12,SUB,true));
-        scoreCard.addView(label(entry.optInt("completionScore",score())+" / 10",29,GOLD,true));
+        scoreCard.addView(label(liveScore+" / 10",29,GOLD,true));
         stats.addView(scoreCard,new LinearLayout.LayoutParams(0,-2,1));
         stats.addView(new View(this),new LinearLayout.LayoutParams(d(8),1));
         LinearLayout streakCard=col();streakCard.setPadding(d(16),d(17),d(12),d(15));
@@ -428,33 +457,64 @@ public class MainActivity extends Activity {
             }
             if(!"done".equals(status)){
                 String reason=entry.optString("aiError","");
-                if(!reason.isEmpty()){
+                if(!reason.isEmpty()||"missing".equals(status)){
+                    String guidance=AiEngine.reportAvailable(this)&&"missing".equals(status)?
+                        tr("Ora l'IA è configurata: premi Genera analisi per ottenere il verdetto.",
+                            "AI is now configured: tap Generate analysis to obtain your reflection.",
+                            "La IA ya está configurada: pulsa Generar análisis para obtener la reflexión."):
+                        AiEngine.reportAvailable(this)?reason:aiSetupExplanation();
                     verdict.addView(label(tr("IA non disponibile: ","AI unavailable: ",
-                        "IA no disponible: ")+reason,13,0xffffbd9b,false));
+                        "IA no disponible: ")+guidance,13,0xffffbd9b,false));
                     space(verdict,9);
                 }
             }
-            verdict.addView(label(report.isEmpty()?fallback():report,16,FG,false));
+            verdict.addView(label(SpeechText.clean(report.isEmpty()?fallback():report),16,FG,false));
             space(verdict,13);
             Button hear=button("🔊 "+tr("Ascolta il verdetto","Listen to reflection","Escuchar observación"),false);
             final String narration=report.isEmpty()?fallback():report;
             hear.setOnClickListener(v->speak(narration));
             verdict.addView(hear);
             space(verdict,11);
-            Button regenerate=button(tr("↻ Rigenera analisi IA","↻ Regenerate AI reflection",
-                "↻ Regenerar observación IA"),false);
-            regenerate.setOnClickListener(v->regenerateWithConfirmation());
+            boolean hasGeneratedAi=entry.optBoolean("aiReport",false);
+            Button regenerate=button(hasGeneratedAi?
+                 tr("↻ Rigenera analisi IA","↻ Regenerate AI reflection","↻ Regenerar análisis IA"):
+                 AiEngine.reportAvailable(this)?
+                 tr("✦ Genera analisi IA","✦ Generate AI reflection","✦ Generar análisis IA"):
+                 tr("⚙ Configura IA online Groq","⚙ Configure Groq online AI","⚙ Configurar IA Groq"),false);
+            regenerate.setOnClickListener(v->requestAnalysis());
             verdict.addView(regenerate);
         }
         content.addView(verdict);space(content,20);
-        Button review=button("← "+tr("Rivedi o modifica il diario",
-            "Review or edit your journal","Revisar o editar el diario"),true);
-        review.setOnClickListener(v->{summaryVisible=false;step=0;render();});
-        content.addView(review,new LinearLayout.LayoutParams(-1,d(57)));
+        boolean alreadyRegistered=entry.optBoolean("diaryRegistered",false);
+        if(alreadyRegistered){
+            content.addView(label("✓ "+tr("Diario registrato e cifrato sul dispositivo",
+                "Journal saved and encrypted on this device",
+                "Diario guardado y cifrado en este dispositivo"),13,CYAN,true));
+            space(content,10);
+        }
+        Button calendarButton=button("📅 "+tr("Calendario e storico","Calendar and history",
+            "Calendario e historial"),false);
+        calendarButton.setOnClickListener(v->openCalendar());
+        content.addView(calendarButton,new LinearLayout.LayoutParams(-1,d(48)));
         space(content,12);
-        content.addView(label(tr("Riepilogo e progressi sono salvati per la giornata.",
-            "Summary and progress are saved for today.",
-            "El resumen y el progreso están guardados para hoy."),12,SUB,false));
+        Button finish=button(alreadyRegistered?
+            tr("✓ Termina e chiudi il diario","✓ Finish and close journal",
+                "✓ Terminar y cerrar diario"):
+            tr("✓ Termina diario e registra","✓ Finish and save journal",
+                "✓ Terminar diario y guardar"),true);
+        finish.setOnClickListener(v->finishAndRegisterJournal());
+        content.addView(finish,new LinearLayout.LayoutParams(-1,d(58)));
+        space(content,12);
+        Button review=button("← "+tr("Rivedi o modifica il diario",
+            "Review or edit your journal","Revisar o editar el diario"),false);
+        review.setOnClickListener(v->{summaryVisible=false;step=0;render();});
+        content.addView(review,new LinearLayout.LayoutParams(-1,d(55)));
+        space(content,14);
+        content.addView(label(tr(
+            "Le risposte, il punteggio, lo streak, il verdetto e l'incoraggiamento rimangono nel diario cifrato.",
+            "Your answers, score, streak, AI reflection and encouragement remain in your encrypted journal.",
+            "Las respuestas, puntuación, racha, observación e incentivo quedan en el diario cifrado."),
+            12,SUB,false));
         building=false;
     }
     private void showFinal(LinearLayout panel) {
@@ -491,14 +551,19 @@ public class MainActivity extends Activity {
         }else{
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
                 String detail=entry.optString("aiError","");
+                if(!AiEngine.reportAvailable(this))detail=aiSetupExplanation();
+                else if("missing".equals(status))detail=tr(
+                    "Groq ora è pronto. Premi Genera analisi IA.",
+                    "Groq is ready. Tap Generate AI reflection.",
+                    "Groq está listo. Pulsa Generar análisis IA.");
                 TextView warning=label(tr("IA non completata: ","AI did not complete: ",
                     "La IA no terminó: ")+detail,14,0xffffbd9b,false);
                 panel.addView(warning);space(panel,14);
             }
-            TextView observation=label(report.isEmpty()?
+            TextView observation=label(SpeechText.clean(report.isEmpty()?
                tr("Premi «Termina» per generare l'osservazione.",
                   "Tap Done to generate your reflection.",
-                  "Pulsa Terminar para generar la observación."):report,16,FG,false);
+                  "Pulsa Terminar para generar la observación."):report),16,FG,false);
             panel.addView(observation);space(panel,14);
             if(!report.isEmpty()){
                 Button hear=button("🔊 "+tr("Ascolta l'osservazione","Listen to reflection","Escuchar observación"),false);
@@ -507,12 +572,10 @@ public class MainActivity extends Activity {
             }
             if("error".equals(status)||"missing".equals(status)||"interrupted".equals(status)){
                 Button retry=button(AiEngine.reportAvailable(this)?
-                   tr("Riprova l'analisi IA","Retry AI reflection","Reintentar análisis IA"):
-                   tr("Attiva Qwen3 integrato","Enable built-in Qwen3","Activar Qwen3 integrado"),true);
-                retry.setOnClickListener(v->{
-                    if(AiEngine.reportAvailable(this))regenerateWithConfirmation();
-                    else downloadBuiltInModel();
-                });panel.addView(retry);space(panel,12);
+                   tr("Genera analisi IA","Generate AI reflection","Generar análisis IA"):
+                   tr("Configura IA Groq o Qwen3","Configure Groq or Qwen3","Configurar Groq o Qwen3"),true);
+                retry.setOnClickListener(v->requestAnalysis());
+                panel.addView(retry);space(panel,12);
             }
         }
         panel.addView(label(tr("Non è una diagnosi né una valutazione medica.",
@@ -520,10 +583,11 @@ public class MainActivity extends Activity {
           "No es un diagnóstico ni una valoración médica."),12,SUB,false));
     }
     private int score(){
-        JSONObject s=session();int n=0;
-        for(String k:new String[]{"p2_0","p2_1","p3_0","p3_1","p4_1","p5_0"})
-            if(!s.optString(k,"").trim().isEmpty())n++;
-        return (int)Math.round(n*10.0/6.0);
+        JSONObject current=session();
+        java.util.HashMap<String,String> answers=new java.util.HashMap<>();
+        for(String key:ProgressMetrics.SCORED_FIELDS)
+            answers.put(key,current.optString(key,""));
+        return ProgressMetrics.score(answers);
     }
     private int streak(){
         JSONObject hist=document.optJSONObject("history");if(hist==null)return 0;
@@ -557,15 +621,377 @@ public class MainActivity extends Activity {
              "NEXT STEPS: Try this concrete action: ","PRÓXIMOS PASOS: Prueba esta acción concreta: ")+action;
         return t+"\n\n"+a+"\n\n"+next;
     }
+    /** Explicit end-of-session action. Do not relaunch AI or pretend a failed encrypted write worked. */
+    /** Archives one complete session, resets the editable fields, and preserves all past dates. */
+    private void finishAndRegisterJournal(){
+        if(recorder!=null)stopRecording();
+        if(transcriptRunning||completingSession
+          ||"generating".equals(session().optString("reportStatus",""))){
+            new AlertDialog.Builder(this)
+                .setTitle(tr("Elaborazione in corso","Processing in progress","Procesamiento en curso"))
+                .setMessage(tr(
+                    "La trascrizione o l'analisi è ancora in corso. Puoi salvare definitivamente non appena termina.",
+                    "Transcription or analysis is still in progress. You can archive the result when it finishes.",
+                    "La transcripción o el análisis sigue en curso. Guarda el resultado cuando termine."))
+                .setPositiveButton("OK",null).show();
+            return;
+        }
+        saveDraft();markDayCompleted();
+        JSONObject previousDocument;
+        try{previousDocument=new JSONObject(document.toString());}
+        catch(Exception error){
+            notifyUser(tr("Impossibile preparare l'archivio.","Could not prepare archive.",
+                "No se pudo preparar el archivo."));
+            return;
+        }
+        int savedScore=score(),savedStreak=streak();
+        java.util.ArrayList<File> sourceAudio=new java.util.ArrayList<>();
+        java.util.ArrayList<File> archivedAudio=new java.util.ArrayList<>();
+        try{
+            JSONObject current=session();
+            JSONObject snapshot=new JSONObject(current.toString());
+            String recordId=java.util.UUID.randomUUID().toString();
+            set(snapshot,"archiveId",recordId);
+            set(snapshot,"recordedAt",java.time.Instant.now().toString());
+            set(snapshot,"completedOn",date);
+            set(snapshot,"completionScore",savedScore);
+            set(snapshot,"completionStreak",savedStreak);
+            set(snapshot,"diaryRegistered",true);
+            JSONObject audioMap=new JSONObject();
+            File archiveFolder=new File(getFilesDir(),"audio_archive");
+            if(!archiveFolder.exists()&&!archiveFolder.mkdirs())
+                throw new java.io.IOException("Could not create audio archive directory");
+            for(int page=0;page<6;page++)for(int index=0;index<3;index++){
+                if(page==1||(page==4&&index==2))continue;
+                String key="p"+page+"_"+index;
+                File source=audioFile(key);
+                if(!source.isFile()||source.length()==0)continue;
+                String fileName=recordId+"_"+key+".m4a";
+                File target=new File(archiveFolder,fileName);
+                java.nio.file.Files.copy(source.toPath(),target.toPath());
+                sourceAudio.add(source);archivedAudio.add(target);
+                set(audioMap,key,fileName);
+            }
+            set(snapshot,"archivedAudio",audioMap);
+            JSONObject archive=document.optJSONObject("archive");
+            if(archive==null){archive=new JSONObject();set(document,"archive",archive);}
+            org.json.JSONArray dayItems=archive.optJSONArray(date);
+            if(dayItems==null){dayItems=new org.json.JSONArray();set(archive,date,dayItems);}
+            dayItems.put(snapshot);
+            JSONObject sessions=document.optJSONObject("sessions");
+            if(sessions==null){sessions=new JSONObject();set(document,"sessions",sessions);}
+            // Reset only the active form; archived diary, history, streak and settings survive.
+            set(sessions,date,new JSONObject());
+            SecureStore.write(this,document);
+        }catch(Exception error){
+            document=previousDocument;
+            for(File copied:archivedAudio)copied.delete();
+            new AlertDialog.Builder(this)
+                .setTitle(tr("Archivio non salvato","Archive not saved","Archivo no guardado"))
+                .setMessage(tr("I dati originali sono rimasti nel diario. Riprova senza cancellare l'app.",
+                    "The original journal remains intact. Retry without clearing app data.",
+                    "El diario original sigue intacto. Inténtalo de nuevo sin borrar la app.")+
+                    "\n"+error.getMessage())
+                .setPositiveButton("OK",null).show();
+            return;
+        }
+        for(File source:sourceAudio)source.delete();
+        // Exit the CBT evaluation and present clean inputs, without losing the archive.
+        step=0;summaryVisible=false;calendarVisible=false;archivedDay=null;
+        currentFields.clear();currentKeys.clear();
+        render();
+        new AlertDialog.Builder(this)
+            .setTitle("✓ "+tr("Diario registrato","Journal archived","Diario archivado"))
+            .setMessage(tr(
+                "La registrazione è conservata nello storico del calendario. I campi sono stati azzerati per una nuova compilazione. Punteggio: ",
+                "Your journal is safely archived in the calendar. The fields are clear for a new entry. Score: ",
+                "Tu diario está archivado en el calendario. Los campos están vacíos para una nueva entrada. Puntuación: ")
+                +savedScore+"/10  •  🔥 "+savedStreak)
+            .setNegativeButton(tr("Nuova compilazione","New entry","Nueva entrada"),null)
+            .setPositiveButton("📅 "+tr("Apri calendario","Open calendar","Abrir calendario"),
+                (dialog,which)->openCalendar())
+            .show();
+    }
+    private boolean hasDiaryContent(JSONObject value){
+        if(value==null)return false;
+        if(!value.optString("report","").trim().isEmpty())return true;
+        if(value.optBoolean("diaryRegistered",false))return true;
+        for(int p=0;p<6;p++)for(int i=0;i<3;i++){
+            if(!value.optString("p"+p+"_"+i,"").trim().isEmpty())return true;
+        }
+        return false;
+    }
+    private org.json.JSONArray recordingsOnDay(String day){
+        org.json.JSONArray result=new org.json.JSONArray();
+        JSONObject archive=document.optJSONObject("archive");
+        org.json.JSONArray stored=archive==null?null:archive.optJSONArray(day);
+        if(stored!=null)for(int i=0;i<stored.length();i++){
+            JSONObject entry=stored.optJSONObject(i);
+            if(entry!=null)result.put(entry);
+        }
+        JSONObject sessions=document.optJSONObject("sessions");
+        JSONObject legacy=sessions==null?null:sessions.optJSONObject(day);
+        JSONObject history=document.optJSONObject("history");
+        boolean hasFinishedLegacy=legacy!=null&&(
+            legacy.optBoolean("diaryRegistered",false)
+            ||!legacy.optString("completedOn","").isEmpty()
+            ||!legacy.optString("reportStatus","").isEmpty());
+        if(history!=null&&history.has(day)&&hasFinishedLegacy&&hasDiaryContent(legacy)){
+            try{
+                JSONObject safeCopy=new JSONObject(legacy.toString());
+                set(safeCopy,"_legacyEntry",true);
+                result.put(safeCopy);
+            }catch(Exception ignored){}
+        }
+        return result;
+    }
+    private void openCalendar(){
+        saveDraft();
+        archivedDay=null;calendarVisible=true;
+        summaryVisible=false;
+        calendarMonth=java.time.YearMonth.from(LocalDate.now());
+        render();
+    }
+    /** Custom monthly calendar: Android CalendarView cannot color arbitrary completed days. */
+    private void renderCalendar(){
+        building=true;currentFields.clear();currentKeys.clear();
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
+        scroll.setBackground(pageBackground());
+        LinearLayout content=col();content.setPadding(d(17),d(24),d(17),d(32));
+        scroll.addView(content);setContentView(scroll);
+        content.addView(label("📅  "+tr("CALENDARIO CBT","CBT CALENDAR","CALENDARIO CBT"),
+            22,CYAN,true));space(content,10);
+        content.addView(label(tr("Giorni evidenziati: diario registrato. Tocca una data per aprire lo storico completo.",
+            "Highlighted dates contain saved journals. Tap a day to open the full entry.",
+            "Los días resaltados contienen diarios guardados. Toca una fecha para ver el historial."),
+            13,SUB,false));space(content,20);
+        LinearLayout nav=row();
+        Button previous=button("‹",false);
+        previous.setOnClickListener(v->{calendarMonth=calendarMonth.minusMonths(1);render();});
+        nav.addView(previous,new LinearLayout.LayoutParams(0,d(52),1));
+        TextView month=label(calendarMonth.atDay(1).format(
+            java.time.format.DateTimeFormatter.ofPattern("LLLL yyyy",I18n.locale(lang))),
+            20,FG,true);month.setGravity(Gravity.CENTER);
+        nav.addView(month,new LinearLayout.LayoutParams(0,d(52),4));
+        Button next=button("›",false);
+        next.setOnClickListener(v->{calendarMonth=calendarMonth.plusMonths(1);render();});
+        nav.addView(next,new LinearLayout.LayoutParams(0,d(52),1));
+        content.addView(nav);space(content,13);
+        String[] week=lang.equals("en")?new String[]{"M","T","W","T","F","S","S"}:
+            lang.equals("es")?new String[]{"L","M","X","J","V","S","D"}:
+            new String[]{"L","M","M","G","V","S","D"};
+        LinearLayout weekdays=row();
+        for(String dayName:week){
+            TextView heading=label(dayName,12,SUB,true);
+            heading.setGravity(Gravity.CENTER);
+            weekdays.addView(heading,new LinearLayout.LayoutParams(0,d(32),1));
+        }
+        content.addView(weekdays);
+        int leading=calendarMonth.atDay(1).getDayOfWeek().getValue()-1;
+        int days=calendarMonth.lengthOfMonth();
+        int rows=(leading+days+6)/7;
+        for(int rowNumber=0;rowNumber<rows;rowNumber++){
+            LinearLayout line=row();
+            for(int column=0;column<7;column++){
+                int dayNumber=rowNumber*7+column-leading+1;
+                if(dayNumber<1||dayNumber>days){
+                    line.addView(new View(this),new LinearLayout.LayoutParams(0,d(55),1));
+                    continue;
+                }
+                LocalDate day=calendarMonth.atDay(dayNumber);
+                String iso=day.toString();
+                int count=recordingsOnDay(iso).length();
+                boolean completed=count>0;
+                Button cell=button(dayNumber+(completed?" ●":""),completed);
+                cell.setTextSize(completed?15:14);cell.setAllCaps(false);
+                cell.setTextColor(completed?BACK:FG);
+                cell.setContentDescription(iso+
+                    (completed?" • "+count+" "+tr("registrazioni","entries","registros"):
+                        " • "+tr("nessun diario","no journal","sin diario")));
+                cell.setOnClickListener(v->{
+                    if(count==0){
+                        notifyUser(tr("Nessuna registrazione salvata per questo giorno.",
+                            "No completed journal on this date.",
+                            "No hay diarios guardados en esta fecha."));
+                    }else{
+                        archivedDay=iso;archivedPosition=0;calendarVisible=false;render();
+                    }
+                });
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,d(55),1);
+                lp.setMargins(d(2),d(2),d(2),d(2));
+                line.addView(cell,lp);
+            }
+            content.addView(line);
+        }
+        space(content,14);
+        content.addView(label("●  "+tr("Giorni con registrazioni archiviate",
+            "Days with archived entries","Días con entradas archivadas"),13,CYAN,false));
+        space(content,18);
+        Button today=button(tr("← Torna alla compilazione",
+             "← Back to current journal","← Volver al diario"),true);
+        today.setOnClickListener(v->{calendarVisible=false;archivedDay=null;summaryVisible=false;step=0;render();});
+        content.addView(today,new LinearLayout.LayoutParams(-1,d(54)));
+        building=false;
+    }
+    private int archivedEntryScore(JSONObject entry){
+        java.util.HashMap<String,String> answers=new java.util.HashMap<>();
+        for(String key:ProgressMetrics.SCORED_FIELDS)
+            answers.put(key,entry.optString(key,""));
+        // Recompute even when v0.2.8 saved a stale 0/10 score.
+        return ProgressMetrics.score(answers);
+    }
+    private void playArchivedAudio(File file){
+        if(file==null||!file.isFile()){
+            notifyUser(tr("La registrazione audio non è disponibile.",
+                "Audio recording unavailable.","Audio no disponible."));
+            return;
+        }
+        try{
+            if(player!=null){player.release();player=null;}
+            player=new MediaPlayer();
+            player.setDataSource(file.getAbsolutePath());
+            player.prepare();
+            player.setOnCompletionListener(mp->{mp.release();player=null;});
+            player.start();
+        }catch(Exception error){
+            notifyUser(tr("Non riesco a riprodurre questa registrazione.",
+                "Could not play this recording.","No se pudo reproducir el audio."));
+        }
+    }
+    private File archivedAudioFile(JSONObject entry,String selectedDay,String key){
+        if(entry.optBoolean("_legacyEntry",false)){
+            File dir=new File(getFilesDir(),"audio");
+            return new File(dir,selectedDay+"_"+key+".m4a");
+        }
+        JSONObject audio=entry.optJSONObject("archivedAudio");
+        String file=audio==null?"":audio.optString(key,"");
+        if(!file.matches("[a-zA-Z0-9_-]+\\.m4a"))return null;
+        return new File(new File(getFilesDir(),"audio_archive"),file);
+    }
+    /** Read-only history detail: all 6 stages, individual answers, attachments, score and AI report. */
+    private void renderArchivedDetail(){
+        building=true;currentFields.clear();currentKeys.clear();
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
+        scroll.setBackground(pageBackground());
+        LinearLayout content=col();content.setPadding(d(17),d(22),d(17),d(36));
+        scroll.addView(content);setContentView(scroll);
+        String viewedDay=archivedDay;
+        org.json.JSONArray history=recordingsOnDay(viewedDay);
+        if(history.length()==0){
+            archivedDay=null;calendarVisible=true;render();return;
+        }
+        archivedPosition=Math.max(0,Math.min(archivedPosition,history.length()-1));
+        JSONObject entry=history.optJSONObject(archivedPosition);
+        if(entry==null){archivedDay=null;calendarVisible=true;render();return;}
+        Button back=button("← "+tr("Calendario","Calendar","Calendario"),false);
+        back.setOnClickListener(v->{archivedDay=null;calendarVisible=true;render();});
+        content.addView(back);space(content,16);
+        content.addView(label(tr("DIARIO ARCHIVIATO","ARCHIVED JOURNAL","DIARIO ARCHIVADO"),
+            13,CYAN,true));space(content,4);
+        content.addView(label(viewedDay,25,FG,true));space(content,8);
+        String recordedAt=entry.optString("recordedAt",entry.optString("registeredAt",""));
+        if(!recordedAt.isEmpty()){
+            String displayTime=recordedAt;
+            try{
+                displayTime=java.time.Instant.parse(recordedAt)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"));
+            }catch(Exception ignored){}
+            content.addView(label(tr("Registrazione alle ","Recorded at ","Registro a las ")+
+                displayTime,13,SUB,false));
+        }
+        space(content,14);
+        if(history.length()>1){
+            content.addView(label(tr("Registrazioni del giorno","Entries recorded today","Registros del día"),
+                13,SUB,true));space(content,8);
+            LinearLayout positions=row();
+            for(int i=0;i<history.length();i++){
+                final int pos=i;
+                Button item=button(Integer.toString(i+1),i==archivedPosition);
+                item.setOnClickListener(v->{archivedPosition=pos;render();});
+                positions.addView(item,new LinearLayout.LayoutParams(0,d(49),1));
+            }
+            content.addView(positions);space(content,16);
+        }
+        LinearLayout stats=row();
+        stats.addView(label(tr("PUNTEGGIO ","SCORE ","PUNTUACIÓN ")+
+            archivedEntryScore(entry)+"/10",19,GOLD,true),new LinearLayout.LayoutParams(0,-2,1));
+        stats.addView(label("🔥 "+entry.optInt("completionStreak",0),19,CYAN,true),
+            new LinearLayout.LayoutParams(0,-2,1));
+        content.addView(stats);space(content,16);
+
+        String[][] prompts=I18n.questions(lang);
+        String[] titles=I18n.headings(lang);
+        for(int stage=0;stage<6;stage++){
+            LinearLayout page=col();page.setBackground(bg(CARD,0xff374568));
+            page.setPadding(d(15),d(16),d(15),d(15));
+            page.addView(label((stage+1)+". "+titles[stage],17,CYAN,true));
+            space(page,12);
+            for(int question=0;question<prompts[stage].length;question++){
+                String key="p"+stage+"_"+question;
+                String answer=entry.optString(key,"").trim();
+                page.addView(label(prompts[stage][question],14,SUB,true));
+                space(page,4);
+                page.addView(label(answer.isEmpty()?
+                    tr("— Nessuna risposta —","— No answer —","— Sin respuesta —"):answer,
+                    16,FG,false));
+                File audio=archivedAudioFile(entry,viewedDay,key);
+                if(audio!=null&&audio.isFile()){
+                    space(page,6);
+                    Button listen=button("▶ "+tr("Ascolta registrazione","Play recording",
+                        "Escuchar grabación"),false);
+                    listen.setOnClickListener(v->playArchivedAudio(audio));
+                    page.addView(listen);
+                }
+                space(page,15);
+            }
+            content.addView(page);space(content,14);
+        }
+        LinearLayout reflection=col();reflection.setBackground(bg(CARD,0xff374568));
+        reflection.setPadding(d(16),d(16),d(16),d(16));
+        reflection.addView(label(tr("OSSERVAZIONE FINALE","FINAL REFLECTION",
+            "OBSERVACIÓN FINAL"),18,CYAN,true));
+        space(reflection,10);
+        String report=entry.optString("report","").trim();
+        reflection.addView(label(report.isEmpty()?
+            tr("Nessuna osservazione registrata.","No reflection recorded.",
+                "No hay observación registrada."):SpeechText.clean(report),
+            16,FG,false));
+        if(!report.isEmpty()){
+            space(reflection,10);
+            Button hear=button("🔊 "+tr("Ascolta","Listen","Escuchar"),false);
+            hear.setOnClickListener(v->speak(report));reflection.addView(hear);
+        }
+        space(reflection,14);
+        reflection.addView(label(tr("INCORAGGIAMENTO","ENCOURAGEMENT","ÁNIMO"),16,GOLD,true));
+        space(reflection,7);
+        String encouragement=entry.optString("encouragement","").trim();
+        reflection.addView(label(SpeechText.clean(encouragement.isEmpty()?
+            practicalEncouragement(entry):encouragement),15,FG,false));
+        content.addView(reflection);space(content,17);
+        Button close=button(tr("📅 Torna al calendario","📅 Back to calendar",
+            "📅 Volver al calendario"),true);
+        close.setOnClickListener(v->{archivedDay=null;calendarVisible=true;render();});
+        content.addView(close,new LinearLayout.LayoutParams(-1,d(54)));
+        building=false;
+    }
     private void markDayCompleted(){
         JSONObject entry=session();
         JSONObject history=document.optJSONObject("history");
         if(history==null){history=new JSONObject();set(document,"history",history);}
-        if(!history.has(date))set(history,date,true);
-        if(!entry.has("completedOn"))set(entry,"completedOn",date);
-        if(!entry.has("completionScore"))set(entry,"completionScore",score());
-        if(!entry.has("completionStreak"))set(entry,"completionStreak",streak());
-        persist();
+        boolean dirty=false;
+        if(!history.has(date)){set(history,date,true);dirty=true;}
+        if(!entry.has("completedOn")){set(entry,"completedOn",date);dirty=true;}
+        // The old code froze a 0/10 score at first finish. If the user edits
+        // answers later, keep the score synchronized with those actual answers.
+        int liveScore=score();
+        if(entry.optInt("completionScore",-1)!=liveScore){
+            set(entry,"completionScore",liveScore);dirty=true;
+        }
+        if(!entry.has("completionStreak")){
+            set(entry,"completionStreak",streak());dirty=true;
+        }
+        if(dirty)persist();
     }
     private void finishSession(){
         if(recorder!=null)stopRecording();
@@ -615,6 +1041,38 @@ public class MainActivity extends Activity {
             scrollFieldIntoView(field);
         }
     }
+    private String aiSetupExplanation(){
+        android.content.SharedPreferences options=getSharedPreferences("options",0);
+        String groqKey=document.optString("groqApiKey","").trim();
+        boolean permission=options.getBoolean("groq_ai_consent",false);
+        if(groqKey.startsWith("gsk_") && !permission){
+            return tr("Groq è configurato per la voce, ma l'analisi del diario richiede un consenso distinto in Impostazioni → Osservazione IA online.",
+                "Groq is configured, but journal analysis needs separate consent in Settings → Online AI Reflection.",
+                "Groq está configurado, pero analizar el diario requiere otro consentimiento en Ajustes → IA online.");
+        }
+        if(!groqKey.startsWith("gsk_")){
+            return tr("Per il verdetto IA online inserisci una chiave Groq valida e attiva il consenso specifico all'analisi del diario.",
+                "For online AI reflections, add a valid Groq key and enable separate journal-analysis consent.",
+                "Para el análisis IA online, añade una clave Groq válida y activa el consentimiento del diario.");
+        }
+        if(!permission){
+            return tr("L'analisi Groq è disattivata per privacy. Abilitala esplicitamente nelle impostazioni.",
+                "Groq analysis is off for privacy. Enable it explicitly in Settings.",
+                "El análisis Groq está desactivado por privacidad. Actívalo explícitamente en Ajustes.");
+        }
+        return tr("Non è attivo nessun modello IA. Verifica Groq nelle impostazioni oppure prepara Qwen3 offline.",
+            "No AI model is active. Check Groq Settings or prepare offline Qwen3.",
+            "No hay un modelo IA activo. Revisa Groq o prepara Qwen3 offline.");
+    }
+    private void requestAnalysis(){
+        if(completingSession)return;
+        if(AiEngine.reportAvailable(this)){
+            if(session().optBoolean("aiReport",false))regenerateWithConfirmation();
+            else completeAndAnalyze();
+        }else{
+            showSettings();
+        }
+    }
     private String shortAiError(Throwable error){
         Throwable root=error;int tries=0;
         while(root!=null&&root.getCause()!=null&&tries++<8)root=root.getCause();
@@ -629,9 +1087,7 @@ public class MainActivity extends Activity {
         JSONObject entry=session();
         if(!AiEngine.reportAvailable(this)){
             set(entry,"reportStatus","missing");
-            set(entry,"aiError",tr("Modello Qwen3 non ancora pronto. Puoi attivarlo qui sotto.",
-              "Qwen3 model not yet ready. Activate it below.",
-              "El modelo Qwen3 no está preparado. Actívalo abajo."));
+            set(entry,"aiError",aiSetupExplanation());
             set(entry,"report",fallback());
             set(entry,"aiReport",false);
             persist();render();return;
