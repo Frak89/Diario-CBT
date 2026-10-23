@@ -26,6 +26,6 @@ jobs:
         run: gradle --no-daemon :app:assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: Diario-CBT-v0.2.3-icon-test-release
+          name: Diario-CBT-v0.2.4-Compact
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
