@@ -29,6 +29,10 @@ public class MainActivity extends Activity {
     private boolean changingPage=false;
     private boolean completingSession=false;
     private boolean summaryVisible=false;
+    private boolean calendarVisible=false;
+    private java.time.YearMonth calendarMonth=java.time.YearMonth.now();
+    private String archivedDay=null;
+    private int archivedPosition=0;
     private boolean transcriptRunning=false;
     private boolean finishAfterTranscript=false;
     private ScrollView activeScroll;
@@ -66,9 +70,17 @@ public class MainActivity extends Activity {
         if(state!=null){
             step=state.getInt("step",0);
             summaryVisible=state.getBoolean("summaryVisible",false);
+            calendarVisible=state.getBoolean("calendarVisible",false);
+            archivedDay=state.getString("archivedDay",null);
+            archivedPosition=state.getInt("archivedPosition",0);
+            String savedMonth=state.getString("calendarMonth","");
+            try{calendarMonth=java.time.YearMonth.parse(savedMonth);}
+            catch(Exception ignored){}
         } else {
-            JSONObject records=document.optJSONObject("history");
-            summaryVisible=records!=null&&records.has(date);
+            JSONObject current=session();
+            JSONObject days=document.optJSONObject("history");
+            // Registered entries are never reopened as editable drafts.
+            summaryVisible=days!=null&&days.has(date)&&hasDiaryContent(current);
         }
         JSONObject unfinished=session();
         if("generating".equals(unfinished.optString("reportStatus",""))){
@@ -86,6 +98,10 @@ public class MainActivity extends Activity {
         saveDraft();
         state.putInt("step",step);
         state.putBoolean("summaryVisible",summaryVisible);
+        state.putBoolean("calendarVisible",calendarVisible);
+        state.putString("archivedDay",archivedDay);
+        state.putInt("archivedPosition",archivedPosition);
+        state.putString("calendarMonth",calendarMonth.toString());
         super.onSaveInstanceState(state);
     }
     @Override protected void onPause(){saveDraft();super.onPause();}
@@ -177,6 +193,8 @@ public class MainActivity extends Activity {
     }
     private void render(){
         if(document==null)return;
+        if(archivedDay!=null){renderArchivedDetail();return;}
+        if(calendarVisible){renderCalendar();return;}
         if(summaryVisible){
             renderSummary();
             return;
@@ -192,6 +210,10 @@ public class MainActivity extends Activity {
         LinearLayout top=row();
         TextView brand=label("◈  DIARIO CBT",23,GOLD,true);
         top.addView(brand,new LinearLayout.LayoutParams(0,-2,1));
+        Button calendar=button("📅",false);
+        calendar.setContentDescription(tr("Apri calendario diario","Open journal calendar","Abrir calendario diario"));
+        calendar.setOnClickListener(v->openCalendar());
+        top.addView(calendar);
         Button settings=button("⚙",false);settings.setOnClickListener(v->{saveDraft();showSettings();});
         top.addView(settings);layout.addView(top);space(layout,14);
         String[] titles=I18n.headings(lang);
@@ -470,6 +492,11 @@ public class MainActivity extends Activity {
                 "Diario guardado y cifrado en este dispositivo"),13,CYAN,true));
             space(content,10);
         }
+        Button calendarButton=button("📅 "+tr("Calendario e storico","Calendar and history",
+            "Calendario e historial"),false);
+        calendarButton.setOnClickListener(v->openCalendar());
+        content.addView(calendarButton,new LinearLayout.LayoutParams(-1,d(48)));
+        space(content,12);
         Button finish=button(alreadyRegistered?
             tr("✓ Termina e chiudi il diario","✓ Finish and close journal",
                 "✓ Terminar y cerrar diario"):
@@ -652,6 +679,42 @@ public class MainActivity extends Activity {
             .setPositiveButton(tr("Chiudi diario","Close journal",
                 "Cerrar diario"),(dialog,which)->finish())
             .show();
+    }
+    private boolean hasDiaryContent(JSONObject value){
+        if(value==null)return false;
+        if(!value.optString("report","").trim().isEmpty())return true;
+        if(value.optBoolean("diaryRegistered",false))return true;
+        for(int p=0;p<6;p++)for(int i=0;i<3;i++){
+            if(!value.optString("p"+p+"_"+i,"").trim().isEmpty())return true;
+        }
+        return false;
+    }
+    private org.json.JSONArray recordingsOnDay(String day){
+        org.json.JSONArray result=new org.json.JSONArray();
+        JSONObject archive=document.optJSONObject("archive");
+        org.json.JSONArray stored=archive==null?null:archive.optJSONArray(day);
+        if(stored!=null)for(int i=0;i<stored.length();i++){
+            JSONObject entry=stored.optJSONObject(i);
+            if(entry!=null)result.put(entry);
+        }
+        JSONObject sessions=document.optJSONObject("sessions");
+        JSONObject legacy=sessions==null?null:sessions.optJSONObject(day);
+        JSONObject history=document.optJSONObject("history");
+        if(history!=null&&history.has(day)&&hasDiaryContent(legacy)){
+            try{
+                JSONObject safeCopy=new JSONObject(legacy.toString());
+                set(safeCopy,"_legacyEntry",true);
+                result.put(safeCopy);
+            }catch(Exception ignored){}
+        }
+        return result;
+    }
+    private void openCalendar(){
+        saveDraft();
+        archivedDay=null;calendarVisible=true;
+        summaryVisible=false;
+        calendarMonth=java.time.YearMonth.from(LocalDate.now());
+        render();
     }
     private void markDayCompleted(){
         JSONObject entry=session();
