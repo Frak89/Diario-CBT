@@ -699,9 +699,30 @@ public class MainActivity extends Activity {
                 if(detail==null)detail="Unknown transcription error";
                 set(values,"speechError_"+key,detail.substring(0,Math.min(detail.length(),180)));
                 persist();
-                notifyUser(tr("Audio conservato. Problema con la trascrizione: ",
-                    "Audio preserved. Transcription issue: ",
-                    "Audio conservado. Problema con la transcripción: ")+detail);
+                // A Toast truncates the most important details of HTTP 429. Show a dialog.
+                if(error instanceof CloudTranscriber.ApiError){
+                    CloudTranscriber.ApiError api=(CloudTranscriber.ApiError)error;
+                    AlertDialog.Builder warning=new AlertDialog.Builder(this)
+                        .setTitle(tr("Problema API: audio conservato",
+                            "API issue: audio preserved","Problema API: audio guardado"))
+                        .setMessage(detail+"\n\n"+tr(
+                            "La tua registrazione resta sul dispositivo. Potrai riprovare dalle impostazioni dopo aver risolto il problema.",
+                            "Your recording remains on the device. Retry from Settings once the issue is resolved.",
+                            "La grabación permanece en el teléfono. Reintenta desde Ajustes después de resolver el problema."))
+                        .setNegativeButton(tr("Chiudi","Close","Cerrar"),null);
+                    if(api.httpStatus==429){
+                        warning.setPositiveButton(tr("Controlla fatturazione API",
+                            "Check API billing","Comprobar facturación API"),(dialog,which)->{
+                            startActivity(new Intent(Intent.ACTION_VIEW,
+                                Uri.parse("https://platform.openai.com/settings/organization/billing/overview")));
+                        });
+                    }
+                    warning.show();
+                }else{
+                    notifyUser(tr("Audio conservato. Trascrizione non riuscita: ",
+                        "Audio preserved. Transcription failed: ",
+                        "Audio guardado. Falló la transcripción: ")+detail);
+                }
             }else{
                 String old=values.optString(key,"").trim();
                 String updated=old.isEmpty()?transcript.trim():old+"\n"+transcript.trim();
