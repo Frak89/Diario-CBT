@@ -22,14 +22,16 @@ Questa versione non richiede che l'utente ricerchi o importi manualmente un file
 - SHA-256 atteso: `c5f39b4191926786c3e6668b62af4d6eb15248dfc7a5348252a9b406f33f2108`.
 - Download in memoria privata dell'app, con possibilità di riprendere download incompleti e verifica SHA-256 prima dell'uso.
 - L'IA elabora il diario **in locale** usando GPU e fallback CPU. Non vengono effettuate chiamate a servizi IA remoti né caricati diari sul web.
-- **Il modello non è dentro l'APK**: per la dimensione di oltre mezzo GB viene scaricato automaticamente alla prima attivazione su consenso dell'utente. Il motore resta pronto per gli utilizzi offline successivi.
+- **Due APK per scegliere**:
+  - **Full AI Offline** — il modello da 614 MB è **già incorporato nell'APK** (~669 MB). Al primo avvio l'app lo copia nello spazio privato e controlla SHA-256: nessuna connessione Internet necessaria.
+  - **Compatto** — APK ~24 MB, runtime IA già integrato; al primo avvio è offerto il download automatico del modello. Dopo il download, l'analisi resta offline.
 - Senza modello, si usa solo una riflessione deterministica **etichettata senza IA generativa**; l'utente può attivare Qwen3 in seguito dalle impostazioni.
 - La compatibilità e le prestazioni effettive su **Pixel 7 Pro Android 17** vanno ancora verificate su dispositivo; la build automatica verifica la compilazione, non l'inferenza reale.
 
 Il motore analizza i pensieri automatici, propone una prospettiva realistica e due piccoli passi concreti sotto l'osservazione finale. Un'altra richiesta genera una frase motivazionale per la splash successiva, senza diagnosi nuove o etichette.
 
 ## Build
-Da GitHub: `Actions → Android test release → Artifacts` (ZIP contenente l'APK). Oppure in Android Studio: JDK 17, SDK 36 e Gradle 8.13.
+Da GitHub: `Actions → Android FULL AI offline APK → Artifacts` per l'APK già completo di Qwen3. In alternativa `Actions → Android test release → Artifacts` per l'APK compatto. Gli artifact sono ZIP: estrai l'APK prima dell'installazione. In Android Studio: JDK 17, SDK 36 e Gradle 8.13.
 
 **Nota APK:** viene compilato con `assembleRelease`, ma è **firmato con chiave di debug per test**, non una release pubblicabile.
 
@@ -38,7 +40,7 @@ Da GitHub: `Actions → Android test release → Artifacts` (ZIP contenente l'AP
 - Nessun indicatore CBT è una valutazione clinica o una misura del valore della persona.
 - Media registrati non cifrati: non utilizzare informazioni vocali sensibili in un ambiente non fidato.
 - Pesi IA scaricati solo da Hugging Face, non viene trasferito alcun contenuto del diario.
-- Richiede un download importante (~614 MB), Wi-Fi consigliato e spazio di archiviazione sufficiente (durante il download fino al doppio per cache parziali).
+- La versione **Full AI** non richiede download del modello, ma necessita spazio libero per installazione APK e copia privata del modello. La versione **compatta** richiede il primo download (~614 MB), preferibilmente via Wi-Fi.
 - Il modello **può commettere errori**: i consigli sono da valutare criticamente. In situazioni urgenti contattare servizi di emergenza o un professionista.
 
 ## Versione
