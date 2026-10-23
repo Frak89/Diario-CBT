@@ -138,8 +138,8 @@ public final class CloudTranscriber {
             throw new IOException("Audio recording is missing.");
         if(input.length()>MAX_BYTES)
             throw new IOException("Recording exceeds the transcription service file limit (24 MiB).");
-        if(apiKey==null||!apiKey.startsWith("sk-")||apiKey.length()<12)
-            throw new IOException("Configure a personal API key for "+(groq?"Groq":"OpenAI")+" in Settings.");
+        if(apiKey==null||apiKey.length()<16||(groq?!apiKey.startsWith("gsk_"):!apiKey.startsWith("sk-")))
+            throw new IOException("Configure a valid "+(groq?"Groq (gsk_...)":"OpenAI (sk-...)")+" API key in Settings.");
         String language=("en".equals(lang)||"es".equals(lang))?lang:"it";
         String boundary="----CBT-"+UUID.randomUUID().toString().replace("-","");
         String model=groq?"whisper-large-v3":"gpt-4o-mini-transcribe";
