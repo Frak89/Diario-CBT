@@ -477,7 +477,9 @@ public class MainActivity extends Activity {
            "Qwen3 0.6B ready to download (Wi-Fi recommended).",
            "Qwen3 0.6B listo para descargar (Wi-Fi recomendado)."),13,SUB,false);
         body.addView(status);
-        Button importButton=button(tr("Attiva IA Qwen3 integrata (~614 MB)","Activate built-in Qwen3 AI (~614 MB)",
+        Button importButton=button(ModelManager.bundled(this)?
+           tr("Prepara IA già inclusa nell'APK","Prepare AI bundled in APK","Preparar IA incluida en APK"):
+           tr("Attiva IA Qwen3 integrata (~614 MB)","Activate built-in Qwen3 AI (~614 MB)",
            "Activar IA Qwen3 integrada (~614 MB)"),false);
         importButton.setOnClickListener(v->downloadBuiltInModel());
         body.addView(importButton);space(body,12);
@@ -512,6 +514,9 @@ public class MainActivity extends Activity {
     }
     private void offerBuiltInAI(){
         if(isFinishing()||AiEngine.available(this))return;
+        if(ModelManager.bundled(this)){
+            downloadBuiltInModel();return;
+        }
         android.content.SharedPreferences prefs=getSharedPreferences("options",0);
         if(prefs.getBoolean("model_intro_seen",false))return;
         prefs.edit().putBoolean("model_intro_seen",true).apply();
@@ -532,7 +537,12 @@ public class MainActivity extends Activity {
         final java.util.concurrent.atomic.AtomicBoolean cancel=new java.util.concurrent.atomic.AtomicBoolean(false);
         final LinearLayout body=col();body.setPadding(d(24),d(22),d(24),d(18));
         TextView title=label("◈  QWEN3 0.6B",20,CYAN,true);body.addView(title);space(body,16);
-        TextView detail=label(tr("Download sicuro dei pesi IA: 614 MB. Nessun dato del diario viene trasferito.",
+        boolean bundled=ModelManager.bundled(this);
+        TextView detail=label(bundled?
+            tr("Preparazione dell'IA già inclusa nell'APK: verifica SHA-256. Non serve Internet.",
+            "Preparing the AI bundled in this APK: SHA-256 verification. No internet needed.",
+            "Preparando la IA incluida en el APK: verificación SHA-256, sin Internet."):
+            tr("Download sicuro dei pesi IA: 614 MB. Nessun dato del diario viene trasferito.",
             "Downloading AI weights: 614 MB. No journal data is transferred.",
             "Descargando IA: 614 MB. No se envía tu diario."),15,FG,false);body.addView(detail);space(body,16);
         ProgressBar bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);
@@ -542,7 +552,7 @@ public class MainActivity extends Activity {
             .setNegativeButton(tr("Interrompi","Cancel","Cancelar"),(dlg,which)->cancel.set(true))
             .setCancelable(false).create();
         dialog.show();
-        ModelManager.download(this,cancel,new ModelManager.Listener(){
+        ModelManager.Listener listener=new ModelManager.Listener(){
             @Override public void progress(long done,long total){
                 int value=(int)(done*100/total);
                 bar.setProgress(value);
@@ -558,6 +568,8 @@ public class MainActivity extends Activity {
                     render();
                 }
             }
-        });
+        };
+        if(bundled)ModelManager.installBundled(this,cancel,listener);
+        else ModelManager.download(this,cancel,listener);
     }
 }
