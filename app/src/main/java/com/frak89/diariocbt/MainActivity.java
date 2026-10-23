@@ -748,6 +748,217 @@ public class MainActivity extends Activity {
         calendarMonth=java.time.YearMonth.from(LocalDate.now());
         render();
     }
+    /** Custom monthly calendar: Android CalendarView cannot color arbitrary completed days. */
+    private void renderCalendar(){
+        building=true;currentFields.clear();currentKeys.clear();
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
+        scroll.setBackground(pageBackground());
+        LinearLayout content=col();content.setPadding(d(17),d(24),d(17),d(32));
+        scroll.addView(content);setContentView(scroll);
+        content.addView(label("📅  "+tr("CALENDARIO CBT","CBT CALENDAR","CALENDARIO CBT"),
+            22,CYAN,true));space(content,10);
+        content.addView(label(tr("Giorni evidenziati: diario registrato. Tocca una data per aprire lo storico completo.",
+            "Highlighted dates contain saved journals. Tap a day to open the full entry.",
+            "Los días resaltados contienen diarios guardados. Toca una fecha para ver el historial."),
+            13,SUB,false));space(content,20);
+        LinearLayout nav=row();
+        Button previous=button("‹",false);
+        previous.setOnClickListener(v->{calendarMonth=calendarMonth.minusMonths(1);render();});
+        nav.addView(previous,new LinearLayout.LayoutParams(0,d(52),1));
+        TextView month=label(calendarMonth.atDay(1).format(
+            java.time.format.DateTimeFormatter.ofPattern("LLLL yyyy",I18n.locale(lang))),
+            20,FG,true);month.setGravity(Gravity.CENTER);
+        nav.addView(month,new LinearLayout.LayoutParams(0,d(52),4));
+        Button next=button("›",false);
+        next.setOnClickListener(v->{calendarMonth=calendarMonth.plusMonths(1);render();});
+        nav.addView(next,new LinearLayout.LayoutParams(0,d(52),1));
+        content.addView(nav);space(content,13);
+        String[] week=lang.equals("en")?new String[]{"M","T","W","T","F","S","S"}:
+            lang.equals("es")?new String[]{"L","M","X","J","V","S","D"}:
+            new String[]{"L","M","M","G","V","S","D"};
+        LinearLayout weekdays=row();
+        for(String dayName:week){
+            TextView heading=label(dayName,12,SUB,true);
+            heading.setGravity(Gravity.CENTER);
+            weekdays.addView(heading,new LinearLayout.LayoutParams(0,d(32),1));
+        }
+        content.addView(weekdays);
+        int leading=calendarMonth.atDay(1).getDayOfWeek().getValue()-1;
+        int days=calendarMonth.lengthOfMonth();
+        int rows=(leading+days+6)/7;
+        for(int rowNumber=0;rowNumber<rows;rowNumber++){
+            LinearLayout line=row();
+            for(int column=0;column<7;column++){
+                int dayNumber=rowNumber*7+column-leading+1;
+                if(dayNumber<1||dayNumber>days){
+                    line.addView(new View(this),new LinearLayout.LayoutParams(0,d(55),1));
+                    continue;
+                }
+                LocalDate day=calendarMonth.atDay(dayNumber);
+                String iso=day.toString();
+                int count=recordingsOnDay(iso).length();
+                boolean completed=count>0;
+                Button cell=button(dayNumber+(completed?" ●":""),completed);
+                cell.setTextSize(completed?15:14);cell.setAllCaps(false);
+                cell.setTextColor(completed?BACK:FG);
+                cell.setContentDescription(iso+
+                    (completed?" • "+count+" "+tr("registrazioni","entries","registros"):
+                        " • "+tr("nessun diario","no journal","sin diario")));
+                cell.setOnClickListener(v->{
+                    if(count==0){
+                        notifyUser(tr("Nessuna registrazione salvata per questo giorno.",
+                            "No completed journal on this date.",
+                            "No hay diarios guardados en esta fecha."));
+                    }else{
+                        archivedDay=iso;archivedPosition=0;calendarVisible=false;render();
+                    }
+                });
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,d(55),1);
+                lp.setMargins(d(2),d(2),d(2),d(2));
+                line.addView(cell,lp);
+            }
+            content.addView(line);
+        }
+        space(content,14);
+        content.addView(label("●  "+tr("Giorni con registrazioni archiviate",
+            "Days with archived entries","Días con entradas archivadas"),13,CYAN,false));
+        space(content,18);
+        Button today=button(tr("← Torna alla compilazione",
+             "← Back to current journal","← Volver al diario"),true);
+        today.setOnClickListener(v->{calendarVisible=false;archivedDay=null;summaryVisible=false;step=0;render();});
+        content.addView(today,new LinearLayout.LayoutParams(-1,d(54)));
+        building=false;
+    }
+    private int archivedEntryScore(JSONObject entry){
+        java.util.HashMap<String,String> answers=new java.util.HashMap<>();
+        for(String key:ProgressMetrics.SCORED_FIELDS)
+            answers.put(key,entry.optString(key,""));
+        // Recompute even when v0.2.8 saved a stale 0/10 score.
+        return ProgressMetrics.score(answers);
+    }
+    private void playArchivedAudio(File file){
+        if(file==null||!file.isFile()){
+            notifyUser(tr("La registrazione audio non è disponibile.",
+                "Audio recording unavailable.","Audio no disponible."));
+            return;
+        }
+        try{
+            if(player!=null){player.release();player=null;}
+            player=new MediaPlayer();
+            player.setDataSource(file.getAbsolutePath());
+            player.prepare();
+            player.setOnCompletionListener(mp->{mp.release();player=null;});
+            player.start();
+        }catch(Exception error){
+            notifyUser(tr("Non riesco a riprodurre questa registrazione.",
+                "Could not play this recording.","No se pudo reproducir el audio."));
+        }
+    }
+    private File archivedAudioFile(JSONObject entry,String selectedDay,String key){
+        if(entry.optBoolean("_legacyEntry",false)){
+            File dir=new File(getFilesDir(),"audio");
+            return new File(dir,selectedDay+"_"+key+".m4a");
+        }
+        JSONObject audio=entry.optJSONObject("archivedAudio");
+        String file=audio==null?"":audio.optString(key,"");
+        if(!file.matches("[a-zA-Z0-9_-]+\\.m4a"))return null;
+        return new File(new File(getFilesDir(),"audio_archive"),file);
+    }
+    /** Read-only history detail: all 6 stages, individual answers, attachments, score and AI report. */
+    private void renderArchivedDetail(){
+        building=true;currentFields.clear();currentKeys.clear();
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
+        scroll.setBackground(pageBackground());
+        LinearLayout content=col();content.setPadding(d(17),d(22),d(17),d(36));
+        scroll.addView(content);setContentView(scroll);
+        String viewedDay=archivedDay;
+        org.json.JSONArray history=recordingsOnDay(viewedDay);
+        if(history.length()==0){
+            archivedDay=null;calendarVisible=true;render();return;
+        }
+        archivedPosition=Math.max(0,Math.min(archivedPosition,history.length()-1));
+        JSONObject entry=history.optJSONObject(archivedPosition);
+        if(entry==null){archivedDay=null;calendarVisible=true;render();return;}
+        Button back=button("← "+tr("Calendario","Calendar","Calendario"),false);
+        back.setOnClickListener(v->{archivedDay=null;calendarVisible=true;render();});
+        content.addView(back);space(content,16);
+        content.addView(label(tr("DIARIO ARCHIVIATO","ARCHIVED JOURNAL","DIARIO ARCHIVADO"),
+            13,CYAN,true));space(content,4);
+        content.addView(label(viewedDay,25,FG,true));space(content,10);
+        if(history.length()>1){
+            content.addView(label(tr("Registrazioni del giorno","Entries recorded today","Registros del día"),
+                13,SUB,true));space(content,8);
+            LinearLayout positions=row();
+            for(int i=0;i<history.length();i++){
+                final int pos=i;
+                Button item=button(Integer.toString(i+1),i==archivedPosition);
+                item.setOnClickListener(v->{archivedPosition=pos;render();});
+                positions.addView(item,new LinearLayout.LayoutParams(0,d(49),1));
+            }
+            content.addView(positions);space(content,16);
+        }
+        LinearLayout stats=row();
+        stats.addView(label(tr("PUNTEGGIO ","SCORE ","PUNTUACIÓN ")+
+            archivedEntryScore(entry)+"/10",19,GOLD,true),new LinearLayout.LayoutParams(0,-2,1));
+        stats.addView(label("🔥 "+entry.optInt("completionStreak",0),19,CYAN,true),
+            new LinearLayout.LayoutParams(0,-2,1));
+        content.addView(stats);space(content,16);
+
+        String[][] prompts=I18n.questions(lang);
+        String[] titles=I18n.headings(lang);
+        for(int stage=0;stage<6;stage++){
+            LinearLayout page=col();page.setBackground(bg(CARD,0xff374568));
+            page.setPadding(d(15),d(16),d(15),d(15));
+            page.addView(label((stage+1)+". "+titles[stage],17,CYAN,true));
+            space(page,12);
+            for(int question=0;question<prompts[stage].length;question++){
+                String key="p"+stage+"_"+question;
+                String answer=entry.optString(key,"").trim();
+                page.addView(label(prompts[stage][question],14,SUB,true));
+                space(page,4);
+                page.addView(label(answer.isEmpty()?
+                    tr("— Nessuna risposta —","— No answer —","— Sin respuesta —"):answer,
+                    16,FG,false));
+                File audio=archivedAudioFile(entry,viewedDay,key);
+                if(audio!=null&&audio.isFile()){
+                    space(page,6);
+                    Button listen=button("▶ "+tr("Ascolta registrazione","Play recording",
+                        "Escuchar grabación"),false);
+                    listen.setOnClickListener(v->playArchivedAudio(audio));
+                    page.addView(listen);
+                }
+                space(page,15);
+            }
+            content.addView(page);space(content,14);
+        }
+        LinearLayout reflection=col();reflection.setBackground(bg(CARD,0xff374568));
+        reflection.setPadding(d(16),d(16),d(16),d(16));
+        reflection.addView(label(tr("OSSERVAZIONE FINALE","FINAL REFLECTION",
+            "OBSERVACIÓN FINAL"),18,CYAN,true));
+        space(reflection,10);
+        String report=entry.optString("report","").trim();
+        reflection.addView(label(report.isEmpty()?
+            tr("Nessuna osservazione registrata.","No reflection recorded.",
+                "No hay observación registrada."):SpeechText.clean(report),
+            16,FG,false));
+        if(!report.isEmpty()){
+            space(reflection,10);
+            Button hear=button("🔊 "+tr("Ascolta","Listen","Escuchar"),false);
+            hear.setOnClickListener(v->speak(report));reflection.addView(hear);
+        }
+        space(reflection,14);
+        reflection.addView(label(tr("INCORAGGIAMENTO","ENCOURAGEMENT","ÁNIMO"),16,GOLD,true));
+        space(reflection,7);
+        String encouragement=entry.optString("encouragement","").trim();
+        reflection.addView(label(SpeechText.clean(encouragement.isEmpty()?
+            practicalEncouragement(entry):encouragement),15,FG,false));
+        content.addView(reflection);space(content,17);
+        Button close=button(tr("📅 Torna al calendario","📅 Back to calendar",
+            "📅 Volver al calendario"),true);
+        close.setOnClickListener(v->{archivedDay=null;calendarVisible=true;render();});
+        content.addView(close,new LinearLayout.LayoutParams(-1,d(54)));
+        building=false;
+    }
     private void markDayCompleted(){
         JSONObject entry=session();
         JSONObject history=document.optJSONObject("history");
