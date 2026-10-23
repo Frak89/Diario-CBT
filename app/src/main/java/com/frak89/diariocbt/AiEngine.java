@@ -23,7 +23,7 @@ public final class AiEngine {
                 try {
                     LlmInference.LlmInferenceOptions opts=LlmInference.LlmInferenceOptions.builder()
                         .setModelPath(modelFile(app).getAbsolutePath())
-                        .setMaxTokens(1536).setTopK(32).setTemperature(0.55f).build();
+                        .setMaxTokens(1536).build();
                     try(LlmInference model=LlmInference.createFromOptions(app,opts)) {
                         text=model.generateResponse(prompt);
                     }
