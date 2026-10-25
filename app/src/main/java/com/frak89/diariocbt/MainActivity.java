@@ -52,6 +52,7 @@ public class MainActivity extends Activity {
     private android.animation.ObjectAnimator recordingPulse;
     private float downX,downY;
     private boolean building;
+    private boolean pendingReminderTest=false;
     private int d(float px) {return (int)(px*getResources().getDisplayMetrics().density+.5f);}
     private String tr(String it,String en,String es) {return I18n.t(lang,it,en,es);}
     private void notifyUser(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
@@ -91,6 +92,9 @@ public class MainActivity extends Activity {
             persist();
         }
         tts=new TextToSpeech(this,status->{if(status==TextToSpeech.SUCCESS) configureVoice();});
+        // Restore an enabled reminder after app updates or if Android cleared the alarm.
+        if(getSharedPreferences("options",0).getBoolean("enabled",false))
+            ReminderReceiver.schedule(this);
         render();
         new Handler(Looper.getMainLooper()).postDelayed(this::offerBuiltInAI,700);
     }
@@ -1456,6 +1460,114 @@ public class MainActivity extends Activity {
             player.prepare();player.setOnCompletionListener(mp->{mp.release();player=null;});player.start();
         }catch(Exception ex){notifyUser(tr("Riproduzione non disponibile.","Playback unavailable.","Reproducción no disponible."));}
     }
+    private String reminderStatusText(){
+        boolean permission=ReminderReceiver.hasNotificationPermission(this);
+        boolean channel=ReminderReceiver.isChannelOpen(this);
+        android.app.AlarmManager alarms=
+            (android.app.AlarmManager)getSystemService(ALARM_SERVICE);
+        boolean exact=Build.VERSION.SDK_INT<31||
+            (alarms!=null&&alarms.canScheduleExactAlarms());
+        android.app.NotificationManager notifications=
+            (android.app.NotificationManager)getSystemService(NOTIFICATION_SERVICE);
+        boolean full=Build.VERSION.SDK_INT<34||
+            (notifications!=null&&notifications.canUseFullScreenIntent());
+        String notificationsText=permission&&channel?
+            tr("Notifiche autorizzate","Notifications allowed","Notificaciones permitidas"):
+            tr("NOTIFICHE BLOCCATE","NOTIFICATIONS BLOCKED","NOTIFICACIONES BLOQUEADAS");
+        String alarmText=exact?
+            tr("Orario preciso consentito","Precise timing allowed","Horario preciso permitido"):
+            tr("Orario approssimativo","Approximate timing","Horario aproximado");
+        String fullText=full?
+            tr("Accesso schermo intero consentito","Full-screen access allowed",
+               "Pantalla completa permitida"):
+            tr("Schermo intero non autorizzato","Full screen not permitted",
+               "Pantalla completa no permitida");
+        return notificationsText+" • "+alarmText+"\n"+fullText;
+    }
+    private void openNotificationSettings(){
+        try{
+            Intent i=new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            i.putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName());
+            startActivity(i);
+        }catch(Exception e){
+            notifyUser(tr("Apri Impostazioni Android → App → Diario CBT → Notifiche.",
+                "Open Android Settings → Apps → Diario CBT → Notifications.",
+                "Abre Ajustes de Android → Apps → Diario CBT → Notificaciones."));
+        }
+    }
+    private void openExactReminderSettings(){
+        if(Build.VERSION.SDK_INT<31)return;
+        try{
+            startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:"+getPackageName())));
+        }catch(Exception ex){
+            notifyUser(tr("Apri Impostazioni → Accesso speciale → Sveglie e promemoria.",
+                "Open Settings → Special app access → Alarms and reminders.",
+                "Abre Ajustes → Acceso especial → Alarmas y recordatorios."));
+        }
+    }
+    private void openFullReminderSettings(){
+        if(Build.VERSION.SDK_INT<34)return;
+        try{
+            startActivity(new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                Uri.parse("package:"+getPackageName())));
+        }catch(Exception ex){
+            notifyUser(tr("Impostazioni → Accesso speciale → Notifiche a schermo intero.",
+                "Settings → Special app access → Full-screen notifications.",
+                "Ajustes → Acceso especial → Notificaciones a pantalla completa."));
+        }
+    }
+    private void sendReminderTest(){
+        ReminderReceiver.ensureChannel(this);
+        if(Build.VERSION.SDK_INT>=33 &&
+           checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
+            pendingReminderTest=true;
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},503);
+            return;
+        }
+        if(!ReminderReceiver.hasNotificationPermission(this)||
+           !ReminderReceiver.isChannelOpen(this)){
+            new AlertDialog.Builder(this)
+                .setTitle(tr("Notifiche disattivate","Notifications disabled","Notificaciones desactivadas"))
+                .setMessage(tr("Android sta bloccando le notifiche dell'app o il canale promemoria. Abilitale nelle impostazioni per ricevere gli avvisi.",
+                    "Android is blocking app notifications or the reminder channel. Enable them in system settings.",
+                    "Android bloquea las notificaciones o el canal de recordatorios. Actívalos en Ajustes."))
+                .setNegativeButton(tr("Chiudi","Close","Cerrar"),null)
+                .setPositiveButton(tr("Apri impostazioni","Open settings","Abrir ajustes"),
+                    (dlg,which)->openNotificationSettings()).show();
+            return;
+        }
+        if(ReminderReceiver.sendTest(this)){
+            new AlertDialog.Builder(this)
+                .setTitle(tr("Notifica di prova inviata","Test notification sent",
+                    "Notificación de prueba enviada"))
+                .setMessage(tr("Controlla la barra notifiche. Se lo schermo è sbloccato, anche con il permesso schermo intero, Android di norma mostra un avviso in alto anziché una finestra a tutto schermo.",
+                    "Check your notification shade. On an unlocked device, even full-screen permission normally produces a heads-up notification instead of opening a full-screen activity.",
+                    "Revisa la barra de notificaciones. Con el teléfono desbloqueado, Android normalmente muestra un aviso en lugar de abrir una pantalla completa."))
+                .setPositiveButton("OK",null).show();
+        }
+    }
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
+        if(requestCode==503){
+            boolean shouldTest=pendingReminderTest;
+            pendingReminderTest=false;
+            if(shouldTest && grantResults.length>0 &&
+                grantResults[0]==PackageManager.PERMISSION_GRANTED)
+                sendReminderTest();
+            else openNotificationSettings();
+        }else if(requestCode==502 && grantResults.length>0 &&
+            grantResults[0]!=PackageManager.PERMISSION_GRANTED){
+            new AlertDialog.Builder(this)
+                .setTitle(tr("Permesso necessario","Permission required","Permiso necesario"))
+                .setMessage(tr("Il promemoria non potrà apparire finché non consenti le notifiche a Diario CBT.",
+                    "Reminders cannot appear until you allow notifications for Diario CBT.",
+                    "Los recordatorios no pueden mostrarse hasta que permitas las notificaciones de Diario CBT."))
+                .setNegativeButton(tr("Chiudi","Close","Cerrar"),null)
+                .setPositiveButton(tr("Impostazioni","Settings","Ajustes"),
+                    (dlg,which)->openNotificationSettings()).show();
+        }
+    }
     private void showSettings(){
         ScrollView sc=new ScrollView(this);LinearLayout body=col();body.setPadding(d(18),d(16),d(18),d(16));
         body.setBackgroundColor(CARD);sc.addView(body);
@@ -1568,7 +1680,38 @@ public class MainActivity extends Activity {
            "Request full-screen reminder (if Android allows it)",
            "Solicitar pantalla completa (si Android lo permite)"));
         fullscreen.setChecked(p.getBoolean("fullscreen",false));body.addView(fullscreen);
-        space(body,10);
+        space(body,9);
+        ReminderReceiver.ensureChannel(this);
+        body.addView(label(reminderStatusText(),13,SUB,false));
+        space(body,8);
+        Button testReminder=button("🔔 "+tr("Invia notifica di prova",
+            "Send test notification","Enviar notificación de prueba"),true);
+        testReminder.setOnClickListener(v->sendReminderTest());
+        body.addView(testReminder);space(body,8);
+        Button notificationSettings=button(tr("Autorizzazioni notifiche Android",
+            "Android notification permissions","Permisos de notificaciones Android"),false);
+        notificationSettings.setOnClickListener(v->openNotificationSettings());
+        body.addView(notificationSettings);space(body,6);
+        if(Build.VERSION.SDK_INT>=31){
+            Button precise=button(tr("Abilita orario preciso (facoltativo)",
+                 "Allow precise reminder times (optional)",
+                 "Permitir hora exacta (opcional)"),false);
+            precise.setOnClickListener(v->openExactReminderSettings());
+            body.addView(precise);space(body,6);
+        }
+        if(Build.VERSION.SDK_INT>=34){
+            Button fullAccess=button(tr("Autorizza schermo intero (se disponibile)",
+                 "Allow full screen (if available)",
+                 "Permitir pantalla completa (si disponible)"),false);
+            fullAccess.setOnClickListener(v->openFullReminderSettings());
+            body.addView(fullAccess);space(body,6);
+        }
+        body.addView(label(tr(
+            "Il promemoria funziona anche senza orario preciso, ma Android può ritardarlo. Lo schermo intero è limitato dal sistema alle app autorizzate; da sbloccato compare normalmente un avviso in alto.",
+            "Reminders also work without exact timing permission, but Android may delay them. Full-screen displays are restricted to authorized apps; unlocked phones normally show a heads-up alert.",
+            "Los recordatorios funcionan sin hora exacta, pero Android puede retrasarlos. La pantalla completa está restringida; al estar desbloqueado normalmente aparece un aviso arriba."),
+            12,SUB,false));
+        space(body,14);
         body.addView(label(tr("Modello IA locale","On-device AI model","Modelo IA local"),15,FG,true));
         TextView status=label(AiEngine.available(this)?
            tr("Qwen3 0.6B installato e verificato. Inferenza locale.",
@@ -1641,9 +1784,19 @@ public class MainActivity extends Activity {
             }
             if(fullscreen.isChecked()&&Build.VERSION.SDK_INT>=34){
                 android.app.NotificationManager nm=(android.app.NotificationManager)getSystemService(NOTIFICATION_SERVICE);
-                if(!nm.canUseFullScreenIntent()){
-                    try{startActivity(new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
-                        Uri.parse("package:"+getPackageName())));}catch(Exception ignored){}
+                if(nm!=null&&!nm.canUseFullScreenIntent()){
+                    new AlertDialog.Builder(this)
+                        .setTitle(tr("Schermo intero non autorizzato",
+                            "Full screen not authorized",
+                            "Pantalla completa no autorizada"))
+                        .setMessage(tr(
+                            "Android non garantisce l'apertura a schermo intero per un diario. Il promemoria userà una notifica importante; puoi verificare l'accesso nelle impostazioni.",
+                            "Android does not guarantee full-screen launches for a journal. The app will send a prominent notification; you can check access in Settings.",
+                            "Android no garantiza pantalla completa para un diario. Se mostrará una notificación importante; puedes verificar el permiso en Ajustes."))
+                        .setNegativeButton(tr("Chiudi","Close","Cerrar"),null)
+                        .setPositiveButton(tr("Controlla autorizzazione",
+                            "Check permission","Verificar permiso"),
+                            (dlg,which)->openFullReminderSettings()).show();
                 }
             }
             dialog.dismiss();configureVoice();render();
