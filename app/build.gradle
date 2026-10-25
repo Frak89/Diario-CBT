@@ -32,8 +32,11 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig (storePath && alias && storePass && keyPass) ?
-                signingConfigs.stable : signingConfigs.debug
+            if(storePath && alias && storePass && keyPass) {
+                signingConfig signingConfigs.stable
+            } else {
+                signingConfig signingConfigs.debug
+            }
         }
     }
 }
