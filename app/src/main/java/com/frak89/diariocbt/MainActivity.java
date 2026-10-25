@@ -1762,7 +1762,7 @@ public class MainActivity extends Activity {
                     }
                     try(InputStream validation=getContentResolver().openInputStream(uri)){
                         if(validation==null)throw new IOException("Could not reopen backup for verification");
-                        PortableBackup.verify(validation,password);
+                        PortableBackup.verify(this,validation,password);
                     }
                 }catch(Exception ex){error=ex;}
                 finally{java.util.Arrays.fill(password,'\0');}
