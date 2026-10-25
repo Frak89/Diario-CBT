@@ -136,7 +136,7 @@ public final class UpdateClient {
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 .setMimeType("application/vnd.android.package-archive")
                 .setDestinationInExternalFilesDir(activity,Environment.DIRECTORY_DOWNLOADS,
-                    "diario-cbt-update.apk");
+                    "diario-cbt-update-"+System.currentTimeMillis()+".apk");
             long id=dm.enqueue(req);
             activity.getSharedPreferences(STORE,0).edit().putLong("downloadId",id).apply();
             new AlertDialog.Builder(activity).setTitle("Download avviato")
