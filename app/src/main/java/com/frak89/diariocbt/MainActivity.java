@@ -1688,6 +1688,13 @@ public class MainActivity extends Activity {
             "Send test notification","Enviar notificación de prueba"),true);
         testReminder.setOnClickListener(v->sendReminderTest());
         body.addView(testReminder);space(body,8);
+        Button previewReminder=button("▣ "+tr("Anteprima popup a pieno schermo",
+            "Preview full-screen popup","Vista previa en pantalla completa"),false);
+        previewReminder.setOnClickListener(v->{
+            startActivity(new Intent(this,AlertActivity.class)
+                .putExtra("reminder_preview",true));
+        });
+        body.addView(previewReminder);space(body,6);
         Button notificationSettings=button(tr("Autorizzazioni notifiche Android",
             "Android notification permissions","Permisos de notificaciones Android"),false);
         notificationSettings.setOnClickListener(v->openNotificationSettings());
