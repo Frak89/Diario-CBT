@@ -1758,13 +1758,17 @@ public class MainActivity extends Activity {
                 try(OutputStream out=getContentResolver().openOutputStream(uri,"w")){
                     if(out==null)throw new IOException("Cannot open backup destination");
                     PortableBackup.export(this,snapshot,password,out);
+                }
+                try(InputStream validation=getContentResolver().openInputStream(uri)){
+                    if(validation==null)throw new IOException("Could not reopen backup for verification");
+                    PortableBackup.verify(validation,password);
                 }catch(Exception ex){error=ex;}
                 finally{java.util.Arrays.fill(password,'\0');}
                 Exception issue=error;
                 runOnUiThread(()->{
-                    if(issue==null)notifyUser(tr("Backup cifrato salvato. Conserva la password.",
-                        "Encrypted backup saved. Keep your password.",
-                        "Copia cifrada guardada. Guarda tu contraseña."));
+                    if(issue==null)notifyUser(tr("Backup salvato e verificato. Conserva la password.",
+                        "Encrypted backup saved and verified. Keep your password.",
+                        "Copia cifrada guardada y verificada. Conserva la contraseña."));
                     else new AlertDialog.Builder(this).setTitle(tr("Backup non riuscito",
                         "Backup failed","Copia fallida")).setMessage(issue.getMessage())
                         .setPositiveButton("OK",null).show();
