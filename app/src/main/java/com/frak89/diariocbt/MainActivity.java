@@ -1755,13 +1755,15 @@ public class MainActivity extends Activity {
             catch(Exception e){java.util.Arrays.fill(password,'\0');notifyUser(e.getMessage());return;}
             io.execute(()->{
                 Exception error=null;
-                try(OutputStream out=getContentResolver().openOutputStream(uri,"w")){
-                    if(out==null)throw new IOException("Cannot open backup destination");
-                    PortableBackup.export(this,snapshot,password,out);
-                }
-                try(InputStream validation=getContentResolver().openInputStream(uri)){
-                    if(validation==null)throw new IOException("Could not reopen backup for verification");
-                    PortableBackup.verify(validation,password);
+                try{
+                    try(OutputStream out=getContentResolver().openOutputStream(uri,"w")){
+                        if(out==null)throw new IOException("Cannot open backup destination");
+                        PortableBackup.export(this,snapshot,password,out);
+                    }
+                    try(InputStream validation=getContentResolver().openInputStream(uri)){
+                        if(validation==null)throw new IOException("Could not reopen backup for verification");
+                        PortableBackup.verify(validation,password);
+                    }
                 }catch(Exception ex){error=ex;}
                 finally{java.util.Arrays.fill(password,'\0');}
                 Exception issue=error;
