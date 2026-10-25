@@ -24,6 +24,19 @@ public class AlertActivity extends Activity {
     sub.setText(I18n.t(l,"Il tuo diario CBT ti aspetta. Nessuna pressione: un passo alla volta.",
      "Your CBT journal awaits. No pressure: one step at a time.","Tu diario CBT te espera. Sin presión: paso a paso."));
     layout.addView(sub);
+    boolean preview=getIntent().getBooleanExtra("reminder_preview",false);
+    if(preview){
+        TextView previewNote=new TextView(this);
+        previewNote.setText(I18n.t(l,
+            "Anteprima della schermata. La sua apertura automatica dipende dai permessi Android.",
+            "Preview only. Automatic full-screen launch depends on Android permissions.",
+            "Solo vista previa. La apertura automática depende de los permisos de Android."));
+        previewNote.setTextColor(0xff62e8ec);previewNote.setGravity(Gravity.CENTER);
+        previewNote.setPadding(0,0,0,32);layout.addView(previewNote);
+        addButton(layout,I18n.t(l,"Chiudi anteprima","Close preview","Cerrar vista previa"),
+            this::finish);
+        return;
+    }
     addButton(layout,I18n.t(l,"Inizia CBT","Start CBT","Empezar CBT"),()->{
        startActivity(new Intent(this,MainActivity.class));finish();
     });
