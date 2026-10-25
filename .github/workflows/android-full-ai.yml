@@ -1,7 +1,7 @@
 name: Android FULL AI offline APK
 on:
   push:
-    branches: [main, feature/modern-ui-integrated-qwen3, feature/rating-buttons-0-10, feature/splash-brain-launcher-icon, fix/cloud-audio-stt-0-2-5, fix/stt-api-429-diagnostics, feature/groq-free-online-ai, fix/tts-score-streak-summary-0-2-8, fix/summary-score-groq-ai-0-2-9]
+    branches: [main, feature/modern-ui-integrated-qwen3, feature/rating-buttons-0-10, feature/splash-brain-launcher-icon, fix/cloud-audio-stt-0-2-5, fix/stt-api-429-diagnostics, feature/groq-free-online-ai, fix/tts-score-streak-summary-0-2-8, fix/summary-score-groq-ai-0-2-9, fix/android17-reminder-alerts-0-3-0]
   workflow_dispatch:
 jobs:
   full_ai:
@@ -33,7 +33,7 @@ jobs:
         run: gradle --no-daemon :app:testReleaseUnitTest :app:assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: Diario-CBT-v0.2.9-FULL-AI-OFFLINE
+          name: Diario-CBT-v0.3.0-FULL-AI-OFFLINE
           path: app/build/outputs/apk/release/*.apk
           compression-level: 0
           if-no-files-found: error

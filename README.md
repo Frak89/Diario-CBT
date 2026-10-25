@@ -110,3 +110,18 @@ Development builds are signed with an ephemeral debug key; do not uninstall a pr
 - Build di test v0.2.9 con test automatici; la compilazione non sostituisce un collaudo reale su Android 17.
 
 Non disinstallare una precedente app con dati importanti, perché gli APK di test GitHub Actions possono avere firme di debug non compatibili fra una release e l'altra.
+
+## v0.3.0 — Android 17 notification/reminder fix
+- Fixed the prior silent reminders: the old implementation used `setInexactRepeating`, which Android may delay substantially, and users could enable reminders without actually granting `POST_NOTIFICATIONS`.
+- A daily one-shot alarm now re-arms itself after each broadcast (including when the diary for today is already complete). Uses `setExactAndAllowWhileIdle` only if exact-alarm special access is granted; otherwise `setAndAllowWhileIdle`, which is intentionally **inexact**. Never bypasses Android's timing restrictions.
+- Manifest declares `SCHEDULE_EXACT_ALARM` (special user permission, optional), `POST_NOTIFICATIONS` and `USE_FULL_SCREEN_INTENT`. Reschedules after boot, app upgrade, clock/time-zone changes and exact-alarm permission changes. Re-arms when the app launches with reminders enabled.
+- New high-importance reminders notification channel `cbt_reminder_alerts_v2`; respects user preference to disable it.
+- Settings now display whether notifications, precise alarms, and full-screen access are permitted. Added:
+  - **Invia notifica di prova**: posts an immediate notification, bypassing schedule and completed-day skip, requesting runtime notification permission if missing.
+  - **Anteprima popup a pieno schermo**: user-triggered preview of the custom reminder panel. This only tests UI, not OS-delivered full-screen intents.
+  - Settings shortcuts for app notification permissions, special exact alarms and full-screen alert permissions.
+- On Android 14+, automatic full-screen notifications are constrained to eligible alarm/calling uses; this journaling application cannot guarantee full-screen launches. On an unlocked phone an authorized full-screen-intent generally appears as an expanded heads-up notification rather than launching an activity. A high-priority heads-up is the graceful fallback.
+- Unit tests cover scheduling at the requested local time, next-day recurrence, invalid input and Europe/Rome DST changes.
+- The app does not require cloud access for local reminders. Sensitive diary contents are never placed into the notification.
+
+**Testing on the actual Pixel 7 Pro** is still required: notification runtime permission, battery policies, user-disabled channels, precise time permission, locked vs unlocked screen, and 24-hour rescheduling. Test APK signatures remain ephemeral and may prevent direct updating from previous builds; do not uninstall an app with valuable entries without backing them up.
