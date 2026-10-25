@@ -110,8 +110,8 @@ public final class PortableBackup {
         return total;
     }
     /** Independently verify the file that was just exported before confirming success. */
-    public static void verify(InputStream input,char[] password)throws Exception{
-        File target=File.createTempFile("cbt-verify-",".cbtbak");
+    public static void verify(Context ctx,InputStream input,char[] password)throws Exception{
+        File target=File.createTempFile("cbt-verify-",".cbtbak",ctx.getCacheDir());
         try {
             try(OutputStream output=new BufferedOutputStream(new FileOutputStream(target))){
                 transfer(input,output,MAX);
