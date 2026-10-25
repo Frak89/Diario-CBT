@@ -6,8 +6,8 @@ android {
         applicationId 'com.frak89.diariocbt'
         minSdk 28
         targetSdk 36
-        versionCode 12
-        versionName '0.3.0'
+        versionCode 13
+        versionName '0.3.1'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -15,11 +15,25 @@ android {
     }
     kotlinOptions { jvmTarget = '17' }
     androidResources { noCompress += ['litertlm'] }
+    def storePath=System.getenv('CBT_KEYSTORE_PATH')
+    def alias=System.getenv('CBT_KEY_ALIAS')
+    def storePass=System.getenv('CBT_STORE_PASSWORD')
+    def keyPass=System.getenv('CBT_KEY_PASSWORD')
+    signingConfigs {
+        if(storePath && alias && storePass && keyPass) {
+            stable {
+                storeFile file(storePath)
+                storePassword storePass
+                keyAlias alias
+                keyPassword keyPass
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
-            // Development test-only signature. Do not use for production release.
-            signingConfig signingConfigs.debug
+            signingConfig (storePath && alias && storePass && keyPass) ?
+                signingConfigs.stable : signingConfigs.debug
         }
     }
 }

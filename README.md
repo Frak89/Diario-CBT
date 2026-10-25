@@ -125,3 +125,12 @@ Non disinstallare una precedente app con dati importanti, perché gli APK di tes
 - The app does not require cloud access for local reminders. Sensitive diary contents are never placed into the notification.
 
 **Testing on the actual Pixel 7 Pro** is still required: notification runtime permission, battery policies, user-disabled channels, precise time permission, locked vs unlocked screen, and 24-hour rescheduling. Test APK signatures remain ephemeral and may prevent direct updating from previous builds; do not uninstall an app with valuable entries without backing them up.
+
+
+## v0.3.1: PDF, backup locale e aggiornamenti
+
+Il calendario ora permette di esportare un singolo diario storico come PDF multipagina e, tramite il comando dedicato, tutti i diari storici. I PDF contengono domande, risposte, osservazione IA, incoraggiamento, punteggio e streak. Gli audio non vengono incorporati nel PDF.
+
+Il backup locale completo salva i dati e gli audio in un file .cbtbak con password (PBKDF2-HMAC-SHA256, AES-256-CTR e HMAC-SHA256). La password deve essere lunga almeno otto caratteri e non è recuperabile. Il backup è indipendente dalla chiave Android Keystore: è trasportabile su un telefono diverso o dopo reinstallazione. Include anche credenziali API, esclusivamente all'interno del file cifrato. Il ripristino verifica prima l'autenticità del file, prepara l'audio e tenta di ripristinare il contenuto precedente in caso di errore. Limite di backup 512 MB; crea prima una copia dei dati presenti, perché il ripristino sostituisce l'archivio.
+
+Gli aggiornamenti vengono verificati automaticamente una volta al giorno tramite le release ufficiali di GitHub e, quando esiste una nuova versione, l'utente può scaricare l'APK e avviarne l'installazione con conferma Android. Gli APK devono essere firmati con lo stesso certificato per installarsi sopra una versione precedente e preservare i dati. Le build di prova GitHub Actions usano una firma di debug che può cambiare. Occorre configurare una chiave di firma stabile tramite i secrets della repository e pubblicare una release ufficiale per garantire aggiornamenti futuri. Se la firma preesistente non coincide, sarà necessario esportare il backup, reinstallare e recuperare il backup: non disinstallare prima del backup.
