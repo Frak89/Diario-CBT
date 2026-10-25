@@ -1,0 +1,76 @@
+name: Publish stable signed Android release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version from app/build.gradle, e.g. 0.3.1'
+        required: true
+        default: '0.3.1'
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+      - run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Require stable signing secrets
+        env:
+          KEYSTORE_B64: ${{ secrets.CBT_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.CBT_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.CBT_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.CBT_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_B64" || { echo "Missing CBT_KEYSTORE_BASE64"; exit 1; }
+          test -n "$STORE_PASS" || { echo "Missing CBT_STORE_PASSWORD"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "Missing CBT_KEY_ALIAS"; exit 1; }
+          test -n "$KEY_PASS" || { echo "Missing CBT_KEY_PASSWORD"; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/diariocbt-stable.jks"
+          echo "CBT_KEYSTORE_PATH=$RUNNER_TEMP/diariocbt-stable.jks" >> "$GITHUB_ENV"
+          echo "CBT_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "CBT_STORE_PASSWORD=$STORE_PASS" >> "$GITHUB_ENV"
+          echo "CBT_KEY_PASSWORD=$KEY_PASS" >> "$GITHUB_ENV"
+      - name: Verify version matches input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          grep -F "versionName '$VERSION'" app/build.gradle || {
+            echo "Version mismatch"; exit 1;
+          }
+      - name: Build compact signed APK
+        run: gradle --no-daemon :app:testReleaseUnitTest :app:assembleRelease
+      - name: Preserve compact APK
+        run: cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/Diario-CBT-v${{ inputs.version }}-Compact.apk"
+      - name: Download pinned Qwen3 model
+        run: |
+          mkdir -p app/src/main/assets
+          curl --fail --location --retry 4 --retry-all-errors --retry-delay 8 \
+            "https://huggingface.co/litert-community/Qwen3-0.6B/resolve/main/Qwen3-0.6B.litertlm" \
+            --output app/src/main/assets/Qwen3-0.6B.litertlm
+          echo "c5f39b4191926786c3e6668b62af4d6eb15248dfc7a5348252a9b406f33f2108  app/src/main/assets/Qwen3-0.6B.litertlm" | sha256sum --check
+      - name: Build full AI signed APK
+        run: gradle --no-daemon :app:assembleRelease
+      - name: Preserve full AI APK
+        run: cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/Diario-CBT-v${{ inputs.version }}-FULL-AI.apk"
+      - name: Publish signed GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            "$RUNNER_TEMP/Diario-CBT-v$VERSION-Compact.apk" \
+            "$RUNNER_TEMP/Diario-CBT-v$VERSION-FULL-AI.apk" \
+            --title "Diario CBT v$VERSION" \
+            --notes "Release firmata con certificato stabile. Per aggiornare senza perdere dati serve la stessa firma dell'app installata. Esegui un backup locale cifrato prima del primo aggiornamento." \
+            --target "$GITHUB_SHA"

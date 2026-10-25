@@ -52,6 +52,12 @@ public class MainActivity extends Activity {
     private android.animation.ObjectAnimator recordingPulse;
     private float downX,downY;
     private boolean building;
+    private static final int PICK_PDF=650, PICK_BACKUP=651, OPEN_BACKUP=652;
+    private int documentAction=0;
+    private String pdfDay;
+    private JSONObject pdfEntry;
+    private boolean pdfAll=false;
+    private char[] backupPassword;
     private boolean pendingReminderTest=false;
     private int d(float px) {return (int)(px*getResources().getDisplayMetrics().density+.5f);}
     private String tr(String it,String en,String es) {return I18n.t(lang,it,en,es);}
@@ -97,6 +103,12 @@ public class MainActivity extends Activity {
             ReminderReceiver.schedule(this);
         render();
         new Handler(Looper.getMainLooper()).postDelayed(this::offerBuiltInAI,700);
+        android.content.SharedPreferences updates=getSharedPreferences("updates",0);
+        long now=System.currentTimeMillis();
+        if(now-updates.getLong("lastCheck",0)>24L*60*60*1000){
+            updates.edit().putLong("lastCheck",now).apply();
+            UpdateClient.check(this,false);
+        }
     }
     @Override protected void onSaveInstanceState(Bundle state){
         saveDraft();
@@ -830,6 +842,11 @@ public class MainActivity extends Activity {
         space(content,14);
         content.addView(label("●  "+tr("Giorni con registrazioni archiviate",
             "Days with archived entries","Días con entradas archivadas"),13,CYAN,false));
+        space(content,12);
+        Button exportAll=button("📄 "+tr("Salva tutto lo storico in PDF",
+            "Export all history as PDF","Guardar todo el historial en PDF"),false);
+        exportAll.setOnClickListener(v->{pdfAll=true;pdfEntry=null;choosePdfFile();});
+        content.addView(exportAll);
         space(content,18);
         Button today=button(tr("← Torna alla compilazione",
              "← Back to current journal","← Volver al diario"),true);
@@ -972,7 +989,17 @@ public class MainActivity extends Activity {
         String encouragement=entry.optString("encouragement","").trim();
         reflection.addView(label(SpeechText.clean(encouragement.isEmpty()?
             practicalEncouragement(entry):encouragement),15,FG,false));
-        content.addView(reflection);space(content,17);
+        content.addView(reflection);space(content,13);
+        Button exportPdf=button("📄 "+tr("Salva questo diario in PDF",
+            "Save this journal as PDF","Guardar este diario en PDF"),false);
+        exportPdf.setOnClickListener(v->{
+            pdfAll=false;pdfDay=viewedDay;
+            try{pdfEntry=new JSONObject(entry.toString());}
+            catch(Exception e){notifyUser(e.getMessage());return;}
+            choosePdfFile();
+        });
+        content.addView(exportPdf,new LinearLayout.LayoutParams(-1,d(52)));
+        space(content,13);
         Button close=button(tr("📅 Torna al calendario","📅 Back to calendar",
             "📅 Volver al calendario"),true);
         close.setOnClickListener(v->{archivedDay=null;calendarVisible=true;render();});
@@ -1568,11 +1595,228 @@ public class MainActivity extends Activity {
                     (dlg,which)->openNotificationSettings()).show();
         }
     }
+    private void choosePdfFile(){
+        Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/pdf");
+        String stamp=pdfAll?"Storico_completo":pdfDay==null?"Diario":pdfDay;
+        intent.putExtra(Intent.EXTRA_TITLE,"Diario_CBT_"+stamp+".pdf");
+        documentAction=PICK_PDF;
+        startActivityForResult(intent,PICK_PDF);
+    }
+    private char[] extractPassword(EditText input){
+        char[] pass=input.getText().toString().toCharArray();
+        input.setText("");
+        return pass;
+    }
+    private EditText passwordField(){
+        EditText field=new EditText(this);
+        field.setTextColor(FG);field.setHintTextColor(SUB);
+        field.setHint(tr("Password di almeno 8 caratteri",
+            "Password of at least 8 characters","Clave de al menos 8 caracteres"));
+        field.setSingleLine(true);
+        field.setInputType(android.text.InputType.TYPE_CLASS_TEXT|
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        return field;
+    }
+    private void createLocalBackup(){
+        saveDraft();
+        LinearLayout body=col();body.setPadding(d(21),d(14),d(21),d(10));
+        body.addView(label(tr(
+            "Il backup include tutti i diari, gli audio, le impostazioni e le chiavi API. È cifrato con questa password, necessaria anche dopo aver reinstallato l'app. Non perderla.",
+            "The backup contains journals, audio, settings and API keys. Your password encrypts it and is required after reinstalling. Keep it safe.",
+            "La copia contiene diarios, audios, ajustes y claves API. La contraseña cifra todo y será necesaria después de reinstalar."),14,FG,false));
+        space(body,12);
+        EditText pass=passwordField();body.addView(pass);space(body,8);
+        EditText again=passwordField();
+        again.setHint(tr("Ripeti password","Repeat password","Repite la contraseña"));
+        body.addView(again);
+        new AlertDialog.Builder(this)
+            .setTitle("🔐 "+tr("Backup locale cifrato","Encrypted local backup",
+                "Copia local cifrada"))
+            .setView(body)
+            .setNegativeButton(tr("Annulla","Cancel","Cancelar"),null)
+            .setPositiveButton(tr("Scegli dove salvare","Choose save location",
+                "Elegir ubicación"),(dialog,which)->{
+                char[] first=extractPassword(pass),second=extractPassword(again);
+                boolean valid=first.length>=8&&java.util.Arrays.equals(first,second);
+                java.util.Arrays.fill(second,'\0');
+                if(!valid){
+                    java.util.Arrays.fill(first,'\0');
+                    notifyUser(tr("Password diverse o troppo corte: almeno 8 caratteri.",
+                        "Passwords differ or are too short: minimum 8 characters.",
+                        "Contraseñas distintas o demasiado cortas: mínimo 8 caracteres."));
+                    return;
+                }
+                backupPassword=first;
+                Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                intent.setType("application/octet-stream");
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.putExtra(Intent.EXTRA_TITLE,"Diario_CBT_Backup_"+
+                    LocalDate.now()+".cbtbak");
+                documentAction=PICK_BACKUP;
+                startActivityForResult(intent,PICK_BACKUP);
+            }).show();
+    }
+    private void chooseBackupToRestore(){
+        Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        documentAction=OPEN_BACKUP;
+        startActivityForResult(intent,OPEN_BACKUP);
+    }
+    private void passwordForRestore(Uri uri){
+        LinearLayout body=col();body.setPadding(d(20),d(16),d(20),d(10));
+        body.addView(label(tr(
+            "Attenzione: il ripristino sostituisce diari, audio e impostazioni attuali con quelli del backup. Prima esporta una copia dello stato presente.",
+            "Warning: restore replaces existing journals, audio and settings. Export your current data before proceeding.",
+            "Atención: la restauración sustituye diarios, audios y ajustes actuales. Haz antes una copia."),14,FG,false));
+        space(body,10);
+        EditText pass=passwordField();body.addView(pass);
+        new AlertDialog.Builder(this)
+            .setTitle("🔐 "+tr("Ripristina backup locale","Restore local backup",
+                "Restaurar copia local"))
+            .setView(body)
+            .setNegativeButton(tr("Annulla","Cancel","Cancelar"),null)
+            .setPositiveButton(tr("Ripristina","Restore","Restaurar"),(dialog,which)->{
+                char[] secret=extractPassword(pass);
+                if(secret.length<8){java.util.Arrays.fill(secret,'\0');
+                    notifyUser(tr("Inserisci la password del backup.",
+                        "Enter the backup password.","Introduce la contraseña."));
+                    return;
+                }
+                io.execute(()->{
+                    Exception error=null;JSONObject recovered=null;
+                    try(InputStream in=getContentResolver().openInputStream(uri)){
+                        if(in==null)throw new IOException("Unable to open backup file");
+                        recovered=PortableBackup.restore(this,secret,in);
+                    }catch(Exception e){error=e;}
+                    finally{java.util.Arrays.fill(secret,'\0');}
+                    Exception issue=error;JSONObject result=recovered;
+                    runOnUiThread(()->{
+                        if(issue!=null){
+                            new AlertDialog.Builder(this)
+                                .setTitle(tr("Ripristino non riuscito","Restore failed",
+                                    "Falló la restauración"))
+                                .setMessage(issue.getMessage())
+                                .setPositiveButton("OK",null).show();
+                        }else{
+                            document=result;date=LocalDate.now().toString();
+                            lang=I18n.lang(this);archivedDay=null;
+                            calendarVisible=false;summaryVisible=false;step=0;
+                            render();
+                            new AlertDialog.Builder(this)
+                                .setTitle(tr("Backup recuperato","Backup restored",
+                                    "Copia restaurada"))
+                                .setMessage(tr(
+                                    "Archivio e audio ripristinati. Controlla il calendario per verificare le date salvate.",
+                                    "Journal and recordings restored. Open the calendar to review saved dates.",
+                                    "Diarios y audios restaurados. Comprueba las fechas en el calendario."))
+                                .setPositiveButton("OK",null).show();
+                        }
+                    });
+                });
+            }).show();
+    }
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent result){
+        super.onActivityResult(requestCode,resultCode,result);
+        if(resultCode!=RESULT_OK||result==null||result.getData()==null){
+            if(requestCode==PICK_BACKUP&&backupPassword!=null){
+                java.util.Arrays.fill(backupPassword,'\0');backupPassword=null;
+            }
+            return;
+        }
+        Uri uri=result.getData();
+        if(requestCode==OPEN_BACKUP){passwordForRestore(uri);return;}
+        if(requestCode==PICK_PDF){
+            JSONObject snapshot=pdfEntry;
+            boolean all=pdfAll;
+            io.execute(()->{
+                Exception error=null;
+                try(OutputStream out=getContentResolver().openOutputStream(uri,"w")){
+                    if(out==null)throw new IOException("Cannot open PDF destination");
+                    if(all)JournalPdf.exportAll(this,document,lang,out);
+                    else JournalPdf.export(this,snapshot,pdfDay,lang,out);
+                }catch(Exception e){error=e;}
+                Exception issue=error;
+                runOnUiThread(()->{
+                    if(issue==null)notifyUser(tr("PDF salvato.","PDF saved.","PDF guardado."));
+                    else new AlertDialog.Builder(this)
+                        .setTitle("PDF").setMessage(issue.getMessage())
+                        .setPositiveButton("OK",null).show();
+                });
+            });return;
+        }
+        if(requestCode==PICK_BACKUP){
+            char[] password=backupPassword;backupPassword=null;
+            if(password==null)return;
+            JSONObject snapshot;
+            try{snapshot=new JSONObject(document.toString());}
+            catch(Exception e){java.util.Arrays.fill(password,'\0');notifyUser(e.getMessage());return;}
+            io.execute(()->{
+                Exception error=null;
+                try{
+                    try(OutputStream out=getContentResolver().openOutputStream(uri,"w")){
+                        if(out==null)throw new IOException("Cannot open backup destination");
+                        PortableBackup.export(this,snapshot,password,out);
+                    }
+                    try(InputStream validation=getContentResolver().openInputStream(uri)){
+                        if(validation==null)throw new IOException("Could not reopen backup for verification");
+                        PortableBackup.verify(this,validation,password);
+                    }
+                }catch(Exception ex){error=ex;}
+                finally{java.util.Arrays.fill(password,'\0');}
+                Exception issue=error;
+                runOnUiThread(()->{
+                    if(issue==null)notifyUser(tr("Backup salvato e verificato. Conserva la password.",
+                        "Encrypted backup saved and verified. Keep your password.",
+                        "Copia cifrada guardada y verificada. Conserva la contraseña."));
+                    else new AlertDialog.Builder(this).setTitle(tr("Backup non riuscito",
+                        "Backup failed","Copia fallida")).setMessage(issue.getMessage())
+                        .setPositiveButton("OK",null).show();
+                });
+            });
+        }
+    }
     private void showSettings(){
         ScrollView sc=new ScrollView(this);LinearLayout body=col();body.setPadding(d(18),d(16),d(18),d(16));
         body.setBackgroundColor(CARD);sc.addView(body);
         body.addView(label(tr("Profilo e impostazioni","Profile and settings","Perfil y ajustes"),21,FG,true));
         space(body,12);
+        body.addView(label(tr("DATI E SICUREZZA","DATA AND SECURITY",
+            "DATOS Y SEGURIDAD"),16,CYAN,true));
+        space(body,7);
+        Button backup=button("🔐 "+tr("Salva backup locale completo",
+            "Save complete local backup","Guardar copia local completa"),false);
+        backup.setOnClickListener(v->createLocalBackup());body.addView(backup);
+        space(body,7);
+        Button restore=button("♻ "+tr("Recupera backup locale",
+            "Restore local backup","Restaurar copia local"),false);
+        restore.setOnClickListener(v->chooseBackupToRestore());body.addView(restore);
+        space(body,8);
+        Button pdfAll=button("📄 "+tr("Esporta tutto lo storico in PDF",
+            "Export all history to PDF","Exportar todo a PDF"),false);
+        pdfAll.setOnClickListener(v->{
+            saveDraft();this.pdfAll=true;pdfEntry=null;choosePdfFile();
+        });body.addView(pdfAll);
+        space(body,14);
+        body.addView(label(tr("AGGIORNAMENTI APP","APP UPDATES",
+            "ACTUALIZACIONES"),16,CYAN,true));
+        space(body,7);
+        Button checkUpdate=button("↻ "+tr("Controlla aggiornamenti GitHub",
+            "Check GitHub updates","Buscar actualizaciones en GitHub"),false);
+        checkUpdate.setOnClickListener(v->UpdateClient.check(this,true));
+        body.addView(checkUpdate);space(body,7);
+        Button installUpdate=button("⬇ "+tr("Installa aggiornamento scaricato",
+            "Install downloaded update","Instalar actualización descargada"),false);
+        installUpdate.setOnClickListener(v->UpdateClient.installDownloaded(this));
+        body.addView(installUpdate);
+        space(body,8);
+        body.addView(label(tr(
+            "Il controllo nuove versioni è automatico, ma Android richiede una conferma per installare. Non è possibile aggiornare sopra una firma APK differente.",
+            "Updates are checked automatically, but Android requires installation approval. An APK signed with a different certificate cannot update the installed app.",
+            "La búsqueda de versiones es automática, pero Android necesita confirmación. Una firma APK distinta impide actualizar."),12,SUB,false));
+        space(body,18);
         body.addView(label(tr("Lingua","Language","Idioma"),15,FG,true));
         Spinner languages=new Spinner(this);
         String[] labels={"Italiano","English","Español"};
