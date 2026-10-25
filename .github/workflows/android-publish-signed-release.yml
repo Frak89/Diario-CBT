@@ -73,4 +73,4 @@ jobs:
             "$RUNNER_TEMP/Diario-CBT-v$VERSION-FULL-AI.apk" \
             --title "Diario CBT v$VERSION" \
             --notes "Release firmata con certificato stabile. Per aggiornare senza perdere dati serve la stessa firma dell'app installata. Esegui un backup locale cifrato prima del primo aggiornamento." \
-            --target "$GITHUB_SHA" --verify-tag=false
+            --target "$GITHUB_SHA"
