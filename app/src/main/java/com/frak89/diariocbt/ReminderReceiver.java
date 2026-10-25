@@ -62,14 +62,8 @@ public final class ReminderReceiver extends BroadcastReceiver {
     }
     public static long nextTrigger(Context c,long now){
         SharedPreferences p=c.getSharedPreferences("options",0);
-        Calendar next=Calendar.getInstance();
-        next.setTimeInMillis(now);
-        next.set(Calendar.HOUR_OF_DAY,p.getInt("hour",21));
-        next.set(Calendar.MINUTE,p.getInt("minute",0));
-        next.set(Calendar.SECOND,0);
-        next.set(Calendar.MILLISECOND,0);
-        if(next.getTimeInMillis()<=now)next.add(Calendar.DAY_OF_MONTH,1);
-        return next.getTimeInMillis();
+        return ReminderTimes.nextMillis(now,java.time.ZoneId.systemDefault(),
+            p.getInt("hour",21),p.getInt("minute",0));
     }
     public static void schedule(Context c){
         SharedPreferences p=c.getSharedPreferences("options",0);
