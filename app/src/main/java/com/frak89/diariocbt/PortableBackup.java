@@ -93,11 +93,9 @@ public final class PortableBackup {
                 zip.closeEntry();
             }
         }
-        zip.finish();zip.flush();encrypted.flush();
-        // Closing encrypted stream would close SAF output before adding authentication tag.
-        // AES CTR is length-preserving; doFinal produces no extra bytes.
-        byte[] finalBlock=cipher.doFinal();
-        if(finalBlock.length!=0)throw new IOException("Unexpected cipher final data");
+        // Properly finalize the ZIP and CTR CipherOutputStream. MacOutput.close()
+        // intentionally does not close the SAF destination, leaving space for the HMAC.
+        zip.close();
         out.write(mac.doFinal());out.flush();
     }
     private static void addBytes(ZipOutputStream zip,String name,byte[] bytes)throws IOException{
@@ -110,6 +108,36 @@ public final class PortableBackup {
             output.write(buf,0,n);
         }
         return total;
+    }
+    /** Independently verify the file that was just exported before confirming success. */
+    public static void verify(InputStream input,char[] password)throws Exception{
+        File target=File.createTempFile("cbt-verify-",".cbtbak");
+        try {
+            try(OutputStream output=new BufferedOutputStream(new FileOutputStream(target))){
+                transfer(input,output,MAX);
+            }
+            long size=target.length();
+            if(size<72||size>MAX)throw new IOException("Invalid backup size");
+            byte[] header=new byte[40],expected=new byte[32];
+            try(RandomAccessFile file=new RandomAccessFile(target,"r")){
+                file.readFully(header);file.seek(size-32);file.readFully(expected);
+            }
+            if(!Arrays.equals(Arrays.copyOfRange(header,0,8),MAGIC))
+                throw new IOException("Invalid backup header");
+            Keys keys=new Keys(password,Arrays.copyOfRange(header,8,24));
+            Mac mac=Mac.getInstance("HmacSHA256");
+            mac.init(keys.mac);
+            try(InputStream stream=new BufferedInputStream(new FileInputStream(target))){
+                byte[] chunk=new byte[32768];long remaining=size-32;
+                while(remaining>0){
+                    int n=stream.read(chunk,0,(int)Math.min(remaining,chunk.length));
+                    if(n<0)throw new EOFException("Truncated backup");
+                    mac.update(chunk,0,n);remaining-=n;
+                }
+            }
+            if(!MessageDigest.isEqual(mac.doFinal(),expected))
+                throw new IOException("Backup verification failed: incomplete or corrupted file");
+        }finally{target.delete();}
     }
     public static JSONObject restore(Context ctx,char[] password,InputStream source)throws Exception {
         if(password.length<8)throw new IOException("Password must be at least 8 characters.");
